@@ -18,7 +18,6 @@
 // mapping change in Rust cannot leave this fixture describing a theme the
 // importer no longer produces.
 
-import type { Theme } from "@/features/theme/lib/theme-api";
 import {
   themeIdSlug,
   type CommittedThemeImport,
@@ -31,6 +30,7 @@ import type { OpenVsxExtension } from "@/lib/open-vsx";
 import type { TypedHandlers } from "../types";
 import importedThemesJson from "./imported-themes.json";
 import { BUILTIN_THEMES } from "./builtin-themes";
+import type { Theme } from "@tryatlas/design/theme";
 
 /** `[tweakcn Catppuccin, Rosé Pine, Rosé Pine Dawn, Nocturne Bright]`.
  *  Through `unknown`: TS widens a JSON array of themes where only some set a

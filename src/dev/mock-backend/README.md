@@ -20,7 +20,7 @@ localhost:1420/?scenario=git-conflict
 `resetStores()` (from `reset-stores.ts`). Neither is used by `bun run dev` —
 they are decision 41's two affordances, so that a future Storybook decorator can
 pick a scenario without a URL and isolate stores without fighting Zustand's
-module singletons. Storybook itself is not in scope; `resetStores()` is callable
+module singletons. Desktop has no Storybook (ADR-0027); `resetStores()` is callable
 today as `__atlasMock.resetStores()`, and its first call is the one that defines
 "clean".
 
@@ -51,7 +51,7 @@ them, and a change that touches one has to be checked in `bun run dev:app`:
   from Finder, arrive through Tauri's native drag-drop channel and the
   `clipboard_file_paths` command reading the macOS pasteboard. The browser's own
   drag-and-drop is a different event with different data, so the in-app drop
-  targets (chat attachments, the canvas, the comms composer, the explorer's
+  targets (chat attachments, the canvas, the comms composer, the file tree's
   move-by-drag) cannot be exercised here.
 - **Native window chrome.** The traffic lights, the window's rounded corners and
   edge shadow, full-screen behaviour, the menu bar and the single-instance

@@ -48,15 +48,17 @@ const VSCODE: PresetBindings = {
   // terminal IS the bottom panel, so both land on it.
   "panels.terminal": ["ctrl+`", "cmd+j"],
   "tabs.newTerminal": ["ctrl+shift+`"],
-  // Atlas's right panel is Source Control: ⌥⌘B is VS Code's secondary side
-  // bar, ⌃⇧G its Source Control view.
-  "panels.right": ["cmd+alt+b", "ctrl+shift+g"],
-  "panels.agentSidebar": ["cmd+ctrl+i"],
+  // `panels.right` is Source Control (the id predates it being a surface):
+  // ⌃⇧G is VS Code's Source Control view. ⌥⌘B, its secondary side bar, keeps
+  // Atlas's default: the session Details card, the panel on the right.
+  "panels.right": ["ctrl+shift+g"],
+  "workspace.toggleSidebar": ["cmd+ctrl+i"],
   "tabs.prev": ["cmd+alt+left", "cmd+shift+["],
   "tabs.next": ["cmd+alt+right", "cmd+shift+]"],
   // ⌘\ splits a focused terminal in VS Code; the terminal scope shadows
   // Atlas's global split-right there, which is exactly the VS Code behaviour.
-  "terminal.splitRight": ["cmd+\\"],
+  // Atlas terminals split down only, so it splits down.
+  "terminal.splitDown": ["cmd+\\"],
   ...CTRL_DIGIT_TABS,
 };
 
@@ -76,7 +78,7 @@ export const PRESETS: readonly Preset[] = [
       // Cursor's side-panel chords. Its ⌘K is inline edit, which Atlas has no
       // equivalent of — the palette stays on VS Code's ⇧⌘P rather than
       // pretending ⌘K means the same thing.
-      "panels.agentSidebar": ["cmd+l", "cmd+i"],
+      "workspace.toggleSidebar": ["cmd+l", "cmd+i"],
     },
   },
   {
@@ -87,10 +89,10 @@ export const PRESETS: readonly Preset[] = [
       "nav.commandPalette": ["cmd+shift+p"],
       "panels.terminal": ["ctrl+`", "cmd+j"],
       "tabs.newTerminal": ["ctrl+shift+`"],
-      // Zed's right dock is ⌘R and its git panel ⌃⇧G; Atlas's right panel is
+      // Zed's right dock is ⌘R and its git panel ⌃⇧G; `panels.right` is
       // Source Control, so it takes both.
       "panels.right": ["ctrl+shift+g", "cmd+r"],
-      "panels.agentSidebar": ["cmd+shift+/"],
+      "workspace.toggleSidebar": ["cmd+shift+/"],
       // Zed's nearest to zen: hide all docks.
       "panels.zen": ["cmd+alt+y"],
       "tabs.prev": ["cmd+alt+left", "cmd+shift+["],
@@ -105,6 +107,8 @@ export const PRESETS: readonly Preset[] = [
     bindings: {
       "nav.commandPalette": ["cmd+shift+a"],
       "nav.filePicker": ["cmd+shift+o"],
+      // ⇧⌘O is Go to File there, so the project list keeps the palette route.
+      "tabs.newChatIn": null,
       "panels.left": ["cmd+1"],
       "panels.terminal": ["alt+f12"],
       // ⌘0 Commit, ⌘9 Git — both open Source Control in Atlas.

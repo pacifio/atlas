@@ -35,7 +35,8 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 # to the import/resume paths in exactly those types.
 atlas-acp-thread = { path = "../atlas-acp-thread" }
 agent-client-protocol = { version = "=2.0.0", features = ["unstable"] }
-chrono = "0.4"
+# `serde` for the attached projects' `attached_at`, stored as JSON.
+chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }

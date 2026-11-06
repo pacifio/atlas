@@ -3,6 +3,9 @@
 // accumulates per-turn files-touched for the adaptive turn card) and the
 // rendering layer agree exactly on paths + add/remove counts.
 
+import type { TurnFile } from "@/types/agent";
+import { enginePatchFiles } from "./engine-patch";
+
 const FILE_PATH_KEYS = ["file_path", "path", "filename", "filePath"];
 
 /** First file-path-like string in a tool call's arguments, or null. */
@@ -124,17 +127,21 @@ export function countChangedLines(oldStr: string, neu: string): { added: number;
 }
 
 /** True when an edit tool call CREATED the file (every edit op had empty prior
- *  content) → git-status "A". A normal edit (non-empty `old`) is "M". */
+ *  content) → git-status "A". A normal edit (non-empty `old`) is "M". The
+ *  native engine's edit created its files when each came as whole content. */
 export function isFileCreated(
   toolName: string,
   args: Record<string, unknown>,
   kind?: string | null,
 ): boolean {
   const parts = getEditParts(toolName, args, kind);
-  return parts.length > 0 && parts.every((p) => p.old === "");
+  if (parts.length > 0) return parts.every((p) => p.old === "");
+  const engine = enginePatchFiles(args);
+  return !!engine && engine.every((f) => f.shape === "content");
 }
 
-/** Total added/removed line counts for an edit tool call. */
+/** Total added/removed line counts for an edit tool call, across every file
+ *  it names. */
 export function countEditLines(
   toolName: string,
   args: Record<string, unknown>,
@@ -142,38 +149,64 @@ export function countEditLines(
 ): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
-  for (const p of getEditParts(toolName, args, kind)) {
+  const parts = getEditParts(toolName, args, kind);
+  for (const p of parts) {
     const c = countChangedLines(p.old, p.neu);
     added += c.added;
     removed += c.removed;
+  }
+  if (parts.length === 0) {
+    for (const f of enginePatchFiles(args) ?? []) {
+      added += f.added;
+      removed += f.removed;
+    }
   }
   return { added, removed };
 }
 
 /**
- * The file a tool call touched, as the per-turn record keeps it — or null when
- * the call is not about a file.
+ * The files a tool call touched, as the per-turn record keeps them — empty
+ * when the call is not about a file. One call usually names one file; the
+ * native engine's edit names every file of its patch, each with its own
+ * counts (`enginePatchFiles`).
  *
  * One builder for the live accumulator (`tool_call_upserted`) and the
- * transcript reconstruction (`reconstructTurnSummaries`), so a resumed thread
+ * transcript reconstruction (`reconstructTurnSummaries`), so a resumed session
  * and a live one cannot disagree about what a call did.
  */
-export function turnFileOfToolCall(call: {
+export function turnFilesOfToolCall(call: {
   toolName: string;
   kind: string | null | undefined;
   arguments: Record<string, unknown>;
   locations?: readonly string[];
-}): import("@/types/agent").TurnFile | null {
-  const path = getToolFilePath(call.arguments, call.locations);
+}): TurnFile[] {
   const kind = classifyToolFileKind(call.kind, call.toolName);
-  if (!path || !kind) return null;
-  if (kind === "read") return { path, kind, added: 0, removed: 0, created: undefined };
+  if (!kind) return [];
+  if (kind === "edit" && getEditParts(call.toolName, call.arguments, call.kind).length === 0) {
+    const engine = enginePatchFiles(call.arguments);
+    if (engine) {
+      // A renamed file is listed where it went.
+      return engine.map((f) => ({
+        path: f.movePath ?? f.path,
+        kind,
+        added: f.added,
+        removed: f.removed,
+        created: f.shape === "content",
+        ...(f.movePath ? { movedFrom: f.path } : {}),
+      }));
+    }
+  }
+  const path = getToolFilePath(call.arguments, call.locations);
+  if (!path) return [];
+  if (kind === "read") return [{ path, kind, added: 0, removed: 0, created: undefined }];
   const { added, removed } = countEditLines(call.toolName, call.arguments, call.kind);
-  return {
-    path,
-    kind,
-    added,
-    removed,
-    created: isFileCreated(call.toolName, call.arguments, call.kind),
-  };
+  return [
+    {
+      path,
+      kind,
+      added,
+      removed,
+      created: isFileCreated(call.toolName, call.arguments, call.kind),
+    },
+  ];
 }

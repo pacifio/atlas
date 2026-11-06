@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, FilePlus2, FolderPlus, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { FilePlus2 } from "lucide-react";
+import {
+  CanvasPagesPanel,
+  type CanvasPageDropIndicator,
+  type CanvasPageRow,
+} from "@tryatlas/design";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { CommsAvatar } from "@/features/comms/components/comms-avatar";
 import { useCommsStore } from "@/features/comms/stores/comms-store";
 import { SPACE_PAGE_NAME_MAX } from "../lib/space-wire";
 import type { SpacePage } from "../lib/spaces-api";
@@ -12,10 +13,10 @@ import type { SpaceSession } from "../lib/use-space-session";
 import { useSpacesStore } from "../stores/spaces-store";
 
 /**
- * The pages sidebar — the local Spaces panel's chrome (quiet header,
- * circular compact buttons) over the server-authoritative tree, with rows in
- * the drafts-list shape: name over "Updated …", author on the right. Always
- * the left column; the TOOL dock is the movable one.
+ * The pages sidebar: the package's `CanvasPagesPanel` over the
+ * server-authoritative tree, with rows in the drafts-list shape (name over
+ * "Updated …", author on the right). Always the left column; the TOOL dock is
+ * the movable one.
  *
  * Deliberately non-optimistic: every row comes from the last `page.tree`
  * broadcast and every edit is one control frame. Reordering is a pointer
@@ -62,7 +63,7 @@ export function SpacePages({
   }, [pages, convId]);
 
   // Flatten the (already depth-first) tree honoring collapsed folders.
-  const rows = useMemo(() => {
+  const flat = useMemo(() => {
     const byParent = new Map<string | null, SpacePage[]>();
     for (const p of pages) {
       const list = byParent.get(p.parent_id) ?? [];
@@ -82,13 +83,31 @@ export function SpacePages({
     return out;
   }, [pages, collapsed]);
 
+  const rows: CanvasPageRow[] = flat.map(({ page, depth }) => {
+    const authorId = authors?.[page.id];
+    // The author, where this client can actually know it.
+    const author = authorId ? (members.find((m) => m.id === authorId) ?? null) : null;
+    return {
+      id: page.id,
+      kind: page.kind === "folder" ? "folder" : "page",
+      name: page.name,
+      icon: page.icon ?? undefined,
+      subtitle:
+        page.kind === "folder"
+          ? undefined
+          : `Updated ${timeAgo(new Date(page.updated_at).toISOString(), { suffix: true })}`,
+      depth,
+      author: author ? { name: author.name, image: author.image } : undefined,
+    };
+  });
+
+  // Counted over the whole tree: a collapsed folder hides pages from `rows`.
   const pageCount = pages.filter((p) => p.kind === "page").length;
 
   // ---- pointer drag with an insertion line --------------------------------
   const [dragId, setDragId] = useState<string | null>(null);
-  const [drop, setDrop] = useState<{ id: string; where: "before" | "after" | "into" } | null>(null);
+  const [drop, setDrop] = useState<CanvasPageDropIndicator | null>(null);
   const pressed = useRef<{ id: string; x: number; y: number } | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const isDescendant = (maybeChild: string, ancestor: string): boolean => {
     const byId = new Map(pages.map((p) => [p.id, p]));
@@ -102,9 +121,7 @@ export function SpacePages({
     return false;
   };
 
-  const hitTest = (
-    e: React.PointerEvent,
-  ): { id: string; where: "before" | "after" | "into" } | null => {
+  const hitTest = (e: React.PointerEvent): CanvasPageDropIndicator | null => {
     const el = document
       .elementFromPoint(e.clientX, e.clientY)
       ?.closest<HTMLElement>("[data-page-id]");
@@ -119,13 +136,18 @@ export function SpacePages({
     return { id, where: frac < 0.5 ? "before" : "after" };
   };
 
-  const onListPointerMove = (e: React.PointerEvent) => {
+  const onRowPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const p = pressed.current;
     if (!p) return;
+    // Released somewhere no row heard it: not a drag.
+    if (e.buttons === 0) {
+      pressed.current = null;
+      return;
+    }
     if (dragId === null) {
       if (Math.abs(e.clientX - p.x) < 5 && Math.abs(e.clientY - p.y) < 5) return;
       setDragId(p.id);
-      listRef.current?.setPointerCapture(e.pointerId);
+      e.currentTarget.setPointerCapture(e.pointerId);
     }
     const next = hitTest(e);
     // Same target, same edge: keep the state identity so the list does not
@@ -133,13 +155,19 @@ export function SpacePages({
     setDrop((cur) => (cur?.id === next?.id && cur?.where === next?.where ? cur : next));
   };
 
-  const onListPointerUp = () => {
+  const onRowPointerUp = () => {
     const src = dragId;
     const target = drop;
     pressed.current = null;
     setDragId(null);
     setDrop(null);
-    if (!src || !target || !editable) return;
+    if (!src) return;
+    // The captured row gets the click that ends a drag: it must not open
+    // the page (or fold the folder) that was just dragged.
+    const swallow = (e: MouseEvent) => e.stopPropagation();
+    window.addEventListener("click", swallow, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+    if (!target || !editable) return;
     const dragged = pages.find((p) => p.id === src);
     const over = pages.find((p) => p.id === target.id);
     if (!dragged || !over) return;
@@ -168,229 +196,62 @@ export function SpacePages({
   };
 
   return (
-    <div
-      className="flex h-full shrink-0 flex-col border-r border-border bg-[var(--card)]"
-      style={{ width: 260 }}
-    >
-      {/* Quiet header — no divider, the local panel's recipe. */}
-      <div className="flex h-8 shrink-0 items-center gap-1 px-2 pl-3">
-        <span className="flex-1 text-2xs font-semibold uppercase leading-none tracking-wider text-muted-foreground">
-          Pages
-        </span>
-        <HintGroup>
-          <RoundButton
-            label="New page"
-            disabled={!editable}
-            onClick={() => create({})}
-            icon={<FilePlus2 size={10} />}
-          />
-          <RoundButton
-            label="New folder"
-            disabled={!editable}
-            onClick={() => create({ kind: "folder" })}
-            icon={<FolderPlus size={10} />}
-          />
-        </HintGroup>
-      </div>
-
-      <div
-        ref={listRef}
-        className="hide-scrollbar min-h-0 flex-1 overflow-y-auto px-1.5 py-1"
-        onPointerMove={onListPointerMove}
-        onPointerUp={onListPointerUp}
-      >
-        {rows.map(({ page, depth }) => {
-          const isFolder = page.kind === "folder";
-          const active = page.id === activeId;
-          const lastPage = !isFolder && pageCount <= 1;
-          const dropHere = drop?.id === page.id;
-          const authorId = authors?.[page.id];
-          const author = authorId ? (members.find((m) => m.id === authorId) ?? null) : null;
-
-          return (
-            <div key={page.id} data-page-id={page.id} className="relative">
-              {dropHere && drop.where !== "into" && (
-                <div
-                  className={cn(
-                    "pointer-events-none absolute left-1 right-1 z-10 h-[2px] rounded bg-[var(--primary)]",
-                    drop.where === "before" ? "top-0" : "bottom-0",
-                  )}
-                />
-              )}
-              <div
-                className={cn(
-                  "group/row flex cursor-pointer items-center gap-2 rounded py-2 pr-2 text-xs",
-                  active
-                    ? "bg-element-selected text-foreground"
-                    : "text-secondary-foreground hover:bg-element-hover",
-                  dropHere && drop.where === "into" && "bg-element-selected/60",
-                  dragId === page.id && "opacity-50",
-                )}
-                style={{ paddingLeft: 6 + depth * 12 }}
-                onPointerDown={(e) => {
-                  if (!editable || renamingId !== null) return;
-                  pressed.current = { id: page.id, x: e.clientX, y: e.clientY };
-                }}
-                onClick={() => {
-                  if (isFolder) {
-                    setCollapsed((cur) => {
-                      const next = new Set(cur);
-                      if (next.has(page.id)) next.delete(page.id);
-                      else next.add(page.id);
-                      return next;
-                    });
-                  } else {
-                    session.openPage(page.id);
-                  }
-                }}
-              >
-                {isFolder && (
-                  <ChevronRight
-                    size={10}
-                    className={cn(
-                      "shrink-0 text-muted-foreground transition-transform",
-                      !collapsed.has(page.id) && "rotate-90",
-                    )}
-                  />
-                )}
-                {/* Name over its updated-at, the drafts-row shape. */}
-                <div className="min-w-0 flex-1">
-                  {renamingId === page.id ? (
-                    <input
-                      autoFocus
-                      maxLength={SPACE_PAGE_NAME_MAX}
-                      defaultValue={page.name}
-                      onClick={(e) => e.stopPropagation()}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onBlur={(e) => {
-                        const v = e.target.value.trim();
-                        setRenamingId(null);
-                        if (v && v !== page.name) session.renamePage(page.id, { name: v });
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
-                        else if (e.key === "Escape") setRenamingId(null);
-                      }}
-                      className="w-full min-w-0 rounded bg-panel-input px-1 text-xs text-foreground outline-none"
-                    />
-                  ) : (
-                    <>
-                      <span
-                        className="block truncate text-sm font-medium leading-[1.35]"
-                        onDoubleClick={(e) => {
-                          if (!editable) return;
-                          e.stopPropagation();
-                          setRenamingId(page.id);
-                        }}
-                      >
-                        {page.name || "Untitled"}
-                      </span>
-                      <span className="block truncate text-2xs leading-[1.35] text-muted-foreground">
-                        Updated {timeAgo(new Date(page.updated_at).toISOString(), { suffix: true })}
-                      </span>
-                    </>
-                  )}
-                </div>
-
-                {/* The author, where this client can actually know it. */}
-                {author && renamingId !== page.id && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span className="flex min-w-0 shrink-0 items-center">
-                          <CommsAvatar member={author} size={16} />
-                          <span className="ml-1 max-w-[64px] truncate text-2xs text-muted-foreground">
-                            {firstName(author.name)}
-                          </span>
-                        </span>
-                      }
-                    />
-                    <TooltipContent side="top" sideOffset={4}>
-                      Created by {author.name}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-
-                {editable && (
-                  <span className="flex shrink-0 items-center gap-1">
-                    {isFolder && (
-                      <Hint label="New page inside">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            create({ parent_id: page.id });
-                          }}
-                          className="hidden size-control-sm cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground group-hover/row:flex"
-                        >
-                          <FilePlus2 size={10} />
-                        </button>
-                      </Hint>
-                    )}
-                    {/* Always drawn, never hover-revealed: a delete that
-                        appears under the cursor is a delete you click by
-                        accident. */}
-                    <Hint
-                      label={
-                        lastPage
-                          ? "The last page of a Space cannot be deleted."
-                          : isFolder
-                            ? `Delete folder “${page.name}” and everything in it`
-                            : `Delete “${page.name}”`
-                      }
-                    >
-                      <button
-                        type="button"
-                        disabled={lastPage}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          session.deletePage(page.id);
-                        }}
-                        className="flex size-control-sm cursor-pointer items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-element-hover hover:text-[var(--atlas-status-error-foreground)] disabled:cursor-not-allowed disabled:opacity-30"
-                      >
-                        <Trash2 size={10} />
-                      </button>
-                    </Hint>
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-        {rows.length === 0 && (
-          <div className="px-2 py-3 text-2xs text-muted-foreground">No pages yet.</div>
-        )}
-      </div>
-    </div>
+    <CanvasPagesPanel
+      className="w-[260px]"
+      rows={rows}
+      activeId={activeId}
+      collapsedIds={collapsed}
+      onToggleFolder={(id) =>
+        setCollapsed((cur) => {
+          const next = new Set(cur);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        })
+      }
+      onOpen={(id) => session.openPage(id)}
+      onCreate={editable ? (kind) => create(kind === "folder" ? { kind } : {}) : undefined}
+      allowFolders
+      renamingId={renamingId}
+      onRenamingChange={setRenamingId}
+      onRename={
+        editable
+          ? (id, name) => session.renamePage(id, { name: name.slice(0, SPACE_PAGE_NAME_MAX) })
+          : undefined
+      }
+      onDelete={editable ? (id) => session.deletePage(id) : undefined}
+      // Always drawn, never hover-revealed: a delete that appears under the
+      // cursor is a delete you click by accident.
+      deleteMode="always"
+      deleteLabel={(row) =>
+        row.kind === "folder"
+          ? `Delete folder “${row.name}” and everything in it`
+          : `Delete “${row.name}”`
+      }
+      lastPageLabel="The last page of a Space cannot be deleted."
+      pageCount={pageCount}
+      rowActions={(row) =>
+        editable && row.kind === "folder"
+          ? [
+              {
+                id: "new-page",
+                label: "New page inside",
+                icon: FilePlus2,
+                onSelect: (id) => create({ parent_id: id }),
+              },
+            ]
+          : []
+      }
+      dropIndicator={drop}
+      getRowProps={(id) => ({
+        onPointerDown: (e) => {
+          if (!editable || renamingId !== null || e.button !== 0) return;
+          pressed.current = { id, x: e.clientX, y: e.clientY };
+        },
+        onPointerMove: onRowPointerMove,
+        onPointerUp: onRowPointerUp,
+        className: dragId === id ? "opacity-50" : undefined,
+      })}
+    />
   );
-}
-
-function RoundButton({
-  label,
-  icon,
-  onClick,
-  disabled,
-}: {
-  label: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <HintItem label={label}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={onClick}
-        className="flex h-5 w-5 cursor-pointer items-center justify-center rounded-full border border-border text-secondary-foreground outline-none transition-colors hover:bg-element-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {icon}
-      </button>
-    </HintItem>
-  );
-}
-
-function firstName(name: string | undefined): string {
-  if (!name) return "Unknown";
-  return name.trim().split(/\s+/)[0] ?? name;
 }

@@ -227,6 +227,9 @@ pub fn start_watcher(app: &AppHandle, handle: AtlasConfigHandle) {
                 let Ok(events) = result else {
                     return;
                 };
+                // `reload_from_disk` opens the file; on Linux that open comes
+                // back here (`fs_events`) and would reload again, forever.
+                let events = crate::fs_events::changes(events);
                 let touches_config = events.iter().any(|e| {
                     e.paths.iter().any(|p| {
                         p.file_name()

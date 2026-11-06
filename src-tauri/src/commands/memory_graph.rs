@@ -201,13 +201,17 @@ pub async fn memory_index_build(
     Ok(graph)
 }
 
+/// Documents embedded on this run, with their vectors, for the caller to
+/// write back to the retrieval index.
+type FreshVectors = Vec<(CorpusDoc, Vec<f32>)>;
+
 /// The graph over `docs`, plus the `(doc, vector)` pairs it had to embed
 /// because `cached` (id → vector from the retrieval index) lacked them.
 fn build_graph_blocking(
     embedder: Arc<Embedder>,
     docs: Vec<MemoryDoc>,
     cached: std::collections::HashMap<String, Vec<f32>>,
-) -> Result<(MemoryGraph, Vec<(CorpusDoc, Vec<f32>)>), String> {
+) -> Result<(MemoryGraph, FreshVectors), String> {
     use std::collections::HashMap;
 
     let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(docs.len());

@@ -1731,6 +1731,8 @@ mod tests {
                 raw_output: None,
                 content_blocks: vec![],
                 parent_tool_call_id: None,
+                started_at_ms: None,
+                ended_at_ms: None,
             };
         assert!(is_external(&call("WebFetch", None, Some("fetch"))));
         assert!(is_external(&call("WebSearch", None, None)));

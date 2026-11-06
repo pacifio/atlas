@@ -1,25 +1,13 @@
-// The right pane of Settings → Agents: one agent's settings, laid out as T3
-// Code's provider editor. A header with its name, version and Remove; its
+// The right pane of Settings → Agents: one agent's settings, laid out as a
+// provider editor. A header with its name, version and Remove; its
 // display name over how it stands; then Setup, Defaults, Runtime,
 // Environment and Models, and Atlas's own About at the end.
 
 import type { ReactNode } from "react";
 import { ArrowUpCircle, Globe, MoreHorizontal, Trash2 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import { AtlasLoader } from "@/components/atlas-loader";
-import { AgentMark } from "@/components/agent-mark";
-import { GithubIcon } from "@/components/github-icon";
+import { AgentMark, GithubIcon } from "@/components/brand-marks";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { updatePhaseLabel } from "@/features/agents/lib/agent-update";
 import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
@@ -42,6 +30,17 @@ import {
 } from "./agent-config-sections";
 import { AgentDefaultsSection } from "./agent-defaults-section";
 import { AgentModelsSection } from "./agent-models-section";
+import {
+  Badge,
+  Button,
+  Icon,
+  IconButton,
+  Hint,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /** The version on this machine: what is installed, else what would install. */
 export function versionOf(item: AgentItem): string | null {

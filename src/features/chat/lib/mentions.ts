@@ -31,6 +31,8 @@ import {
   type MentionRecordedSession,
   type OrgMentionKind,
 } from "./org-mentions";
+import type { ProjectAccess } from "./history-api";
+import { withContextsInline, type AgentContext } from "@/features/ask-agent/lib/agent-context";
 
 export type {
   MentionComment,
@@ -40,7 +42,7 @@ export type {
 } from "./org-mentions";
 import type { PackComponentKind } from "@/features/skills/lib/types";
 // NOTE: skills are no longer a mention kind — inlining a skill body into the
-// prompt was retired (see docs/adr/0001-slash-tokens-pass-through-skills-are-not-inlined.md).
+// prompt was retired (see docs/adr/0025-slash-tokens-pass-through-skills-are-not-inlined.md).
 // Skill invocation goes through the agent-advertised `/` passthrough now.
 // Pack-delivered components (command/agent/rule) are unrelated and stay.
 
@@ -83,7 +85,23 @@ export type MentionKind =
   | "recorded_session"
   // A comment on the chat's own recorded session, linked so the agent attends
   // to it (`comment-mentions.ts`). Rides as `atlas-org://comment/…` + a quote.
-  | "comment";
+  | "comment"
+  // Text too large to sit in the composer (`isLargePaste`), kept as a chip.
+  // Never reaches `compose_prompt`: it rides `agents_send`'s `pastedTexts`,
+  // and Rust picks its form by the agent's `embeddedContext` capability.
+  | "pasted_text"
+  // A passage of one of this session's own agent replies, cited back to the
+  // agent with an optional note (`cited-text.ts`). Never in the picker: only
+  // the transcript's selection pill makes one.
+  | "cited_text"
+  // A comment on lines of a diff or a file, written in the gutter beside a
+  // session (`review-comments.ts`). Never in the picker.
+  | "review_comment"
+  // A piece of work a surface handed the agent: a file range, a diff hunk, a
+  // memory, a commit, an error, a quote (`ask-agent/lib/agent-context.ts`).
+  // Never in the picker, and never reaches `compose_prompt`: `composePrompt`
+  // writes it after the prose itself.
+  | "agent_context";
 
 export interface MentionFile {
   kind: "file";
@@ -153,6 +171,9 @@ export interface MentionRepo {
   displayName: string; // repo folder name
   absPath: string;
   hasReadme: boolean;
+  /** Set only on the way to `compose_prompt`, once the send has attached the
+   *  repo to the session (`attach-mentioned-projects.ts`). Never stored. */
+  access?: ProjectAccess;
 }
 
 export interface MentionProject {
@@ -162,6 +183,8 @@ export interface MentionProject {
   absPath: string; // the project path, expanded into the prompt at send
   /** Owning org name, shown as the secondary label to disambiguate. */
   orgName: string | null;
+  /** As on {@link MentionRepo}: the attached access, set only at send. */
+  access?: ProjectAccess;
 }
 
 export interface MentionBranch {
@@ -198,6 +221,81 @@ export interface MentionPastSession {
   endBeforeRemember?: boolean;
 }
 
+/** A large paste, held whole in the chip until the send. */
+export interface MentionPastedText {
+  kind: "pasted_text";
+  /** Short and unique — the `@paste:<id>` token and the `atlas://paste/<id>`
+   *  URI the agent may see. */
+  id: string;
+  displayName: string; // "Pasted text · 120 lines"
+  lines: number;
+  text: string;
+}
+
+/** A passage of an earlier reply in this session, cited back to the agent. */
+export interface MentionCitedText {
+  kind: "cited_text";
+  /** Short and unique — the `@cite:<id>` token. */
+  id: string;
+  /** The chip's label: the start of the passage, quoted. */
+  displayName: string;
+  /** The transcript message the passage was selected in. */
+  messageId: string;
+  /** The captured row that message is, on a session shared with the team;
+   *  null when the session is not captured or the row is not known. */
+  rowId: string | null;
+  /** The passage, capped at `CITE_MAX_CHARS`. */
+  text: string;
+  /** What the user wants to say about it; empty for none. */
+  note: string;
+}
+
+/**
+ * A comment on lines of a diff or a file, written beside a session and sent
+ * with its next prompt (`review-comments.ts`). Local to the draft: nothing is
+ * posted anywhere. The prompt carries its `@review:<id>` token, and
+ * `compose_prompt` (Rust) appends the file, the range, the quoted lines and
+ * the comment.
+ */
+export interface MentionReviewComment {
+  kind: "review_comment";
+  /** Short and unique — the `@review:<id>` token. */
+  id: string;
+  /** The chip's label: `path:from-to`, as the file view's line reference. */
+  displayName: string;
+  /** Where it was written: a diff scope's key, or `file:<abs path>`. The
+   *  surface draws back only the comments of its own section. */
+  sectionId: string;
+  /** That section for a reader: "Changes", "Uncommitted", "Turn 3", "File". */
+  sectionTitle: string;
+  /** The path as the diff or the file view shows it. */
+  filePath: string;
+  /** `+12 to +14`, `L3`, …: the range in the section's numbering. */
+  rangeLabel: string;
+  /** The quoted lines: a hunk (`diff`) or the file's own text. Capped. */
+  diff: string;
+  /** The fence the quote goes in: `diff`, or the file's extension. */
+  fenceLanguage: string;
+  /** What the user wrote. */
+  text: string;
+  /** The picked range, to draw the comment back on its lines. */
+  start: number;
+  end: number;
+  side: "additions" | "deletions";
+  endSide: "additions" | "deletions";
+}
+
+/** A piece of work a surface handed the agent (`askAgent`). */
+export interface MentionAgentContext {
+  kind: "agent_context";
+  /** Short and unique — the `@ctx:<id>` token. */
+  id: string;
+  /** The chip's label (`contextLabel`). */
+  displayName: string;
+  /** What it is and where it came from, capped (`capContext`). */
+  context: AgentContext;
+}
+
 export type MentionData =
   | MentionFile
   | MentionFolder
@@ -212,7 +310,11 @@ export type MentionData =
   | MentionMember
   | MentionConversation
   | MentionRecordedSession
-  | MentionComment;
+  | MentionComment
+  | MentionPastedText
+  | MentionCitedText
+  | MentionReviewComment
+  | MentionAgentContext;
 
 // ── Catalog ──────────────────────────────────────────────────────────────────
 
@@ -436,6 +538,14 @@ export function toShortForm(m: MentionData): string {
       return `@recorded-session:${shortFormValue(m.displayName)}`;
     case "comment":
       return `@comment:${shortFormValue(m.displayName)}`;
+    case "pasted_text":
+      return `@paste:${m.id}`;
+    case "cited_text":
+      return `@cite:${m.id}`;
+    case "review_comment":
+      return `@review:${m.id}`;
+    case "agent_context":
+      return `@ctx:${m.id}`;
   }
 }
 
@@ -735,6 +845,12 @@ export interface ResourceLinkSpec {
   name: string;
 }
 
+/** A large paste's whole text, for `agents_send`. */
+export interface PastedTextSpec {
+  id: string;
+  text: string;
+}
+
 /** Prose plus the structured file references the turn should carry.
  *
  *  `resourceLinks` used to be flattened into the prose ("File at `/x/y`. Use
@@ -744,13 +860,29 @@ export interface ResourceLinkSpec {
 export interface ComposedPrompt {
   prose: string;
   resourceLinks: ResourceLinkSpec[];
+  /** Large pastes, each sent in full beside the prose — never through
+   *  `compose_prompt`, which has no such kind. */
+  pastedTexts: PastedTextSpec[];
 }
 
 export async function composePrompt(
   prosePlainText: string,
-  mentions: MentionData[],
+  allMentions: MentionData[],
 ): Promise<ComposedPrompt> {
-  if (mentions.length === 0) return { prose: prosePlainText, resourceLinks: [] };
+  const pastedTexts: PastedTextSpec[] = [];
+  const mentions: MentionData[] = [];
+  const contexts: MentionAgentContext[] = [];
+  for (const m of allMentions) {
+    if (m.kind === "pasted_text") pastedTexts.push({ id: m.id, text: m.text });
+    else if (m.kind === "agent_context") contexts.push(m);
+    else mentions.push(m);
+  }
+  // A surface's context is written here, after whatever `compose_prompt`
+  // appends: Rust has no such kind, and needs none.
+  const withContexts = (prose: string) => withContextsInline(prose, contexts);
+  if (mentions.length === 0) {
+    return { prose: withContexts(prosePlainText), resourceLinks: [], pastedTexts };
+  }
   const wireMentions = await Promise.all(
     mentions.map(async (m) => {
       if (m.kind === "knowledge") {
@@ -780,13 +912,14 @@ export async function composePrompt(
     }),
   );
   try {
-    return await invoke<ComposedPrompt>("compose_prompt", {
+    const composed = await invoke<Omit<ComposedPrompt, "pastedTexts">>("compose_prompt", {
       prose: prosePlainText,
       mentions: wireMentions,
     });
+    return { ...composed, prose: withContexts(composed.prose), pastedTexts };
   } catch (e) {
     console.warn("compose_prompt invoke failed, sending raw prose:", e);
-    return { prose: prosePlainText, resourceLinks: [] };
+    return { prose: withContexts(prosePlainText), resourceLinks: [], pastedTexts };
   }
 }
 

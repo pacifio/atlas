@@ -1,4 +1,4 @@
-import { BASE_RULE_REGISTRY, PALETTE_KEYS, THEME_KEY_REGISTRY } from "../theme-key-registry";
+import { BASE_RULE_REGISTRY, PALETTE_KEYS, THEME_KEY_REGISTRY } from "@tryatlas/design/theme";
 
 /**
  * What the theme editor offers, grouped

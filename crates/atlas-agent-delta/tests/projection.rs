@@ -13,7 +13,9 @@ use atlas_acp_thread::{
     AcpThread, AcpThreadHandle, AgentConnection, AgentId as ThreadAgentId, AuthorizationKind,
     PermissionOptions,
 };
-use atlas_agent_delta::{AgentId, DeltaProjector, DeltaSink, SessionDelta, SessionDeltaEnvelope};
+use atlas_agent_delta::{
+    AgentId, DeltaProjector, DeltaSink, Origin, QueuedPrompt, SessionDelta, SessionDeltaEnvelope,
+};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 
@@ -222,10 +224,11 @@ async fn a_thought_after_text_opens_its_own_message() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_user_message_never_reaches_the_wire() {
-    // Capture gets the prompt from the send path, with the raw text before
-    // memory prefixing. A user message on the delta stream would double-record
-    // it, and with the wrong text.
+async fn an_unstamped_user_message_never_reaches_the_wire() {
+    // Only a prompt the host stamped is announced (`stamp_user_message`). A
+    // user entry nobody stamped — history an agent replays on `session/load` —
+    // stays silent, as every user entry used to: the snapshot carries it, and
+    // announcing a replay would paint the conversation twice.
     let harness = Harness::start();
 
     lock(&harness.thread).push_user_content_block(
@@ -365,11 +368,19 @@ async fn a_turn_is_a_status_flip_and_a_terminal() {
         SessionDelta::TurnFinished {
             stop_reason,
             turn_seq,
+            started_at_ms,
+            ended_at_ms,
+            worked_ms,
         } => {
             // The token the frontend matches on, serialized rather than
             // hand-formatted (ATL-6 shipped "endturn").
             assert_eq!(stop_reason, "end_turn");
             assert_eq!(*turn_seq, 7);
+            // The turn's wall time travels with its terminal, so the client
+            // never has to time it itself.
+            let (started, ended) = (started_at_ms.unwrap(), ended_at_ms.unwrap());
+            assert!(started <= ended, "{started} > {ended}");
+            assert!(worked_ms.is_some(), "timed on the monotonic clock");
         }
         other => panic!("expected a terminal, got {other:?}"),
     }
@@ -603,9 +614,14 @@ async fn the_host_announces_what_the_thread_cannot() {
         "the model refused",
         Some("auth".into()),
     );
-    harness
-        .projector
-        .note_model_changed(&harness.session_id, "anthropic/claude");
+    harness.projector.note_model_changed(
+        &harness.session_id,
+        "anthropic/claude",
+        Some(Origin::Remote {
+            id: "user-7".into(),
+            name: Some("Ada".into()),
+        }),
+    );
     harness
         .projector
         .note_compression_saved(&harness.session_id, 128);
@@ -632,6 +648,20 @@ async fn the_host_announces_what_the_thread_cannot() {
             assert_eq!(error_kind.as_deref(), Some("auth"));
         }
         other => panic!("expected a failure, got {other:?}"),
+    }
+    match &harness.recorder.deltas()[1] {
+        SessionDelta::ModelChanged { model_id, origin } => {
+            assert_eq!(model_id, "anthropic/claude");
+            assert_eq!(
+                origin,
+                &Some(Origin::Remote {
+                    id: "user-7".into(),
+                    name: Some("Ada".into()),
+                }),
+                "the announcement names who picked it"
+            );
+        }
+        other => panic!("expected a model change, got {other:?}"),
     }
 }
 
@@ -830,6 +860,41 @@ fn a_snapshot_carries_the_whole_conversation_including_the_user() {
     // Message ids are unique — the frontend keys its mirror on them.
     let ids: std::collections::HashSet<_> = messages.iter().map(|m| &m.id).collect();
     assert_eq!(ids.len(), messages.len());
+}
+
+/// ACP carries no per-message time, so what an agent's `session/load` replays
+/// is stamped when Atlas heard it. The wire says so, live and in snapshots,
+/// until the user speaks again; from there messages are timed for real.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_replayed_message_says_its_time_is_approximate() {
+    let harness = Harness::start();
+
+    lock(&harness.thread).begin_replay();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "user_message_chunk",
+        "content": { "type": "text", "text": "fix the bug" },
+    }));
+    harness.update(text_chunk("found it"));
+    harness.expect(1);
+    match &harness.recorder.deltas()[0] {
+        SessionDelta::MessageAppended { message } => assert!(message.timestamp_approximate),
+        other => panic!("expected a message, got {other:?}"),
+    }
+
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("and the test".to_string())),
+    );
+    harness.update(text_chunk("added"));
+    harness.expect(2);
+    match &harness.recorder.deltas()[1] {
+        SessionDelta::MessageAppended { message } => assert!(!message.timestamp_approximate),
+        other => panic!("expected a message, got {other:?}"),
+    }
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let approximate: Vec<bool> = messages.iter().map(|m| m.timestamp_approximate).collect();
+    assert_eq!(approximate, [true, true, false, false]);
 }
 
 // ------------------------------------------------------- terminal tool calls
@@ -1085,11 +1150,11 @@ async fn the_host_announces_config_options_the_set_response_confirmed() {
 
     harness
         .projector
-        .note_config_options(&harness.session_id, &options);
+        .note_config_options(&harness.session_id, &options, None);
     harness.expect(1);
 
     match &harness.recorder.deltas()[0] {
-        SessionDelta::ConfigOptionsUpdated { config_options } => {
+        SessionDelta::ConfigOptionsUpdated { config_options, .. } => {
             assert_eq!(config_options.len(), 1);
             assert_eq!(config_options[0]["id"], "thought");
             assert_eq!(
@@ -2059,4 +2124,681 @@ async fn ordinary_tool_calls_announce_no_subagent() {
         subagents(&harness).is_empty(),
         "shape alone must not read as a subagent"
     );
+}
+
+fn tool_call_of(delta: &SessionDelta) -> &atlas_agent_delta::ToolCall {
+    match delta {
+        SessionDelta::ToolCallUpserted { tool_call, .. } => tool_call,
+        other => panic!("expected a tool call, got {other:?}"),
+    }
+}
+
+/// A call's start is stamped the first time it is seen, its end the first time
+/// it settles, and neither moves after that — which is what lets a reloaded
+/// session show the same duration the live one did.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_call_is_timed_from_first_sight_to_first_settling() {
+    let harness = Harness::start();
+
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Bash",
+        "kind": "execute",
+        "status": "in_progress",
+        "rawInput": { "command": "ls" },
+    }));
+    harness.expect(1);
+    let first = tool_call_of(&harness.recorder.deltas()[0]).clone();
+    let started = first.started_at_ms.expect("stamped at first sight");
+    assert_eq!(first.ended_at_ms, None, "still running");
+
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "status": "completed",
+    }));
+    harness.expect(2);
+    let settled = tool_call_of(&harness.recorder.deltas()[1]).clone();
+    assert_eq!(
+        settled.started_at_ms,
+        Some(started),
+        "the start never moves"
+    );
+    let ended = settled.ended_at_ms.expect("stamped when it completed");
+    assert!(ended >= started + 5, "{ended} vs {started}");
+
+    // A later update to a finished call (a retitle) re-stamps nothing.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "call-1",
+        "title": "Bash (done)",
+    }));
+    harness.expect(3);
+    let later = tool_call_of(&harness.recorder.deltas()[2]).clone();
+    assert_eq!(later.started_at_ms, Some(started));
+    assert_eq!(later.ended_at_ms, Some(ended));
+
+    // And the snapshot a reloaded client hydrates from says the same.
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let call = &messages[0].tool_calls[0];
+    assert_eq!(call.started_at_ms, Some(started));
+    assert_eq!(call.ended_at_ms, Some(ended));
+}
+
+/// A call that fails, or is cancelled with its turn, has ended too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_tool_call_is_stamped_as_ended() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Bash",
+        "kind": "execute",
+        "status": "in_progress",
+    }));
+    lock(&harness.thread).cancel();
+    harness.pump();
+
+    let last = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .rev()
+        .find(|delta| matches!(delta, SessionDelta::ToolCallUpserted { .. }))
+        .expect("the cancel was announced");
+    let call = tool_call_of(&last);
+    assert_eq!(call.status, atlas_agent_delta::ToolCallStatus::Failed);
+    assert!(call.ended_at_ms.is_some());
+}
+
+/// The snapshot puts each turn's wall time and stop reason on the message
+/// that ends it, so "Worked for" / "Stopped after" survives a reload.
+#[test]
+fn a_snapshot_carries_each_turns_timing_on_its_last_message() {
+    let harness = Harness::start();
+    let prompt = |text: &str| {
+        lock(&harness.thread).push_user_content_block(
+            None,
+            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+        );
+    };
+
+    prompt("first");
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Read a.rs",
+        "kind": "read",
+        "status": "completed",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "done" },
+    }));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+
+    // A turn the user stopped before the agent said anything has no message
+    // of its own, and must not lend its time to the previous turn's reply.
+    prompt("second");
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+
+    prompt("third");
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "partial" },
+    }));
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    let timing: Vec<(&str, Option<u64>, Option<&str>)> = messages
+        .iter()
+        .map(|m| {
+            (
+                if m.content.is_empty() {
+                    "tool"
+                } else {
+                    m.content.as_str()
+                },
+                m.worked_ms,
+                m.stop_reason.as_deref(),
+            )
+        })
+        .collect();
+    // Two prompts with nothing between them are one user entry in the thread.
+    assert_eq!(timing.len(), 5, "{timing:?}");
+    assert_eq!(timing[0], ("first", None, None));
+    assert_eq!(
+        timing[1],
+        ("tool", None, None),
+        "only the turn's last message"
+    );
+    assert_eq!(timing[2].0, "done");
+    assert!(timing[2].1.unwrap() >= 5, "{timing:?}");
+    assert_eq!(
+        timing[2].2,
+        Some("end_turn"),
+        "the empty turn lent it nothing"
+    );
+    assert_eq!(timing[3], ("secondthird", None, None));
+    assert_eq!(timing[4].0, "partial");
+    assert!(timing[4].1.is_some());
+    assert_eq!(timing[4].2, Some("cancelled"));
+
+    // Absent rather than null on the wire, like every other optional field.
+    let json = serde_json::to_value(&messages[0]).unwrap();
+    assert!(json.get("worked_ms").is_none(), "got: {json}");
+    assert!(json.get("stop_reason").is_none(), "got: {json}");
+}
+
+fn chunk(harness: &Harness, text: &str) {
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": text },
+    }));
+}
+
+/// A rewind inside a turn (`/undo`) must not leave the open turn counting
+/// from past the end of the thread: what the turn says after the rewind is
+/// its own, and is the message its timing belongs on.
+#[test]
+fn a_turn_rewound_into_still_times_what_it_says_next() {
+    let harness = Harness::start();
+    let prompt = |text: &str| {
+        lock(&harness.thread).push_user_content_block(
+            None,
+            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+        );
+    };
+
+    prompt("first");
+    lock(&harness.thread).begin_turn();
+    chunk(&harness, "first reply");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+
+    prompt("/undo");
+    lock(&harness.thread).begin_turn();
+    // The rewind takes the first exchange and the prompt back …
+    lock(&harness.thread).remove_entries_from(0);
+    // … and the turn then answers.
+    chunk(&harness, "undone");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    harness.pump();
+
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(messages[0].content, "undone");
+    assert!(
+        messages[0].worked_ms.is_some(),
+        "the reply after the rewind is timed"
+    );
+    assert_eq!(messages[0].stop_reason.as_deref(), Some("end_turn"));
+}
+
+/// A stop that arrives after its turn already closed — a cancel answered
+/// behind the stop it raced — is swallowed, so it cannot relabel the finished
+/// turn as stopped.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_late_duplicate_stop_does_not_relabel_a_finished_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).push_user_content_block(
+        None,
+        acp::ContentBlock::Text(acp::TextContent::new("go".to_string())),
+    );
+    lock(&harness.thread).begin_turn();
+    chunk(&harness, "done");
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<String> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished { stop_reason, .. } => Some(stop_reason),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished, ["end_turn"], "one terminal, the real one");
+    let messages = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+    assert_eq!(
+        messages.last().unwrap().stop_reason.as_deref(),
+        Some("end_turn")
+    );
+}
+
+/// The terminal carries the turn it closed, not whatever the thread's newest
+/// record is when the projector gets to it: here a whole second turn runs
+/// before the first stop is drained.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_terminal_drained_late_announces_its_own_turn() {
+    let harness = Harness::start();
+    lock(&harness.thread).begin_turn();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    lock(&harness.thread).begin_turn();
+    lock(&harness.thread).end_turn(acp::StopReason::Cancelled);
+    harness.pump();
+
+    let finished: Vec<(String, u64)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::TurnFinished {
+                stop_reason,
+                worked_ms,
+                ..
+            } => Some((stop_reason, worked_ms.unwrap())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert_eq!(finished[0].0, "end_turn");
+    assert!(finished[0].1 >= 30, "{finished:?}");
+    assert_eq!(finished[1].0, "cancelled");
+    assert!(finished[1].1 < 30, "{finished:?}");
+}
+
+// ------------------------------------------------------- Universal RC groundwork
+
+fn user_text(text: &str) -> acp::ContentBlock {
+    acp::ContentBlock::Text(acp::TextContent::new(text.to_string()))
+}
+
+fn seqs(harness: &Harness) -> Vec<u64> {
+    harness
+        .recorder
+        .envelopes
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|envelope| envelope.seq)
+        .collect()
+}
+
+/// A prompt the host sent is the user half of the exchange on the wire, with
+/// who sent it and the id the sender minted — what lets a remote viewer see
+/// the question, and the window adopt its own optimistic row.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stamped_prompt_is_announced_with_its_sender() {
+    let harness = Harness::start();
+
+    harness.projector.stamp_user_message(
+        &harness.session_id,
+        Origin::Remote {
+            id: "guest:ab12".into(),
+            name: Some("Sam".into()),
+        },
+        Some("cm-1".into()),
+    );
+    {
+        // Pushed under one lock, as `AgentManager::send` does.
+        let mut thread = lock(&harness.thread);
+        thread.push_user_content_block(None, user_text("fix the "));
+        thread.push_user_content_block(None, user_text("build"));
+    }
+    harness.update(text_chunk("on it"));
+    harness.expect(2);
+
+    assert_eq!(
+        harness.recorder.kinds(),
+        ["user_message", "message_appended"],
+        "the whole prompt is one announcement, before the answer"
+    );
+    match &harness.recorder.deltas()[0] {
+        SessionDelta::UserMessage {
+            message,
+            origin,
+            client_message_id,
+        } => {
+            assert_eq!(message.role, atlas_agent_delta::MessageRole::User);
+            assert_eq!(message.content, "fix the build");
+            assert_eq!(client_message_id.as_deref(), Some("cm-1"));
+            assert_eq!(
+                origin,
+                &Origin::Remote {
+                    id: "guest:ab12".into(),
+                    name: Some("Sam".into())
+                }
+            );
+        }
+        other => panic!("expected the user's message, got {other:?}"),
+    }
+}
+
+/// A second prompt sent before the agent said anything merges into the first
+/// one's thread entry. It is still a send of its own, so it is still
+/// announced — with only its own text.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_prompt_that_merges_into_the_last_entry_is_still_announced() {
+    let harness = Harness::start();
+
+    harness
+        .projector
+        .stamp_user_message(&harness.session_id, Origin::Local, Some("a".into()));
+    lock(&harness.thread).push_user_content_block(None, user_text("first"));
+    harness.pump();
+    harness
+        .projector
+        .stamp_user_message(&harness.session_id, Origin::Local, Some("b".into()));
+    lock(&harness.thread).push_user_content_block(None, user_text("second"));
+    harness.pump();
+
+    let announced: Vec<(String, Option<String>)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::UserMessage {
+                message,
+                client_message_id,
+                ..
+            } => Some((message.content, client_message_id)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        announced,
+        [
+            ("first".to_string(), Some("a".to_string())),
+            ("second".to_string(), Some("b".to_string())),
+        ]
+    );
+}
+
+/// `seq` is dense, starts at 1 and follows emit order, for thread-driven and
+/// host-announced deltas alike.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_delta_is_numbered_densely_in_emit_order() {
+    let harness = Harness::start();
+
+    harness.update(text_chunk("Hel"));
+    harness
+        .projector
+        .note_model_changed(&harness.session_id, "anthropic/claude", None);
+    harness.update(text_chunk("lo"));
+    harness.projector.note_queue_changed(
+        &harness.session_id,
+        vec![QueuedPrompt {
+            id: "q-1".into(),
+            text: "next".into(),
+            origin: Origin::Local,
+        }],
+    );
+    harness
+        .projector
+        .note_hold_changed(&harness.session_id, true);
+    harness.expect(5);
+
+    assert_eq!(seqs(&harness), [1, 2, 3, 4, 5]);
+    assert_eq!(
+        harness.recorder.kinds(),
+        [
+            "message_appended",
+            "model_changed",
+            "text_chunk",
+            "queue_changed",
+            "hold_changed"
+        ]
+    );
+}
+
+/// The joiner's contract: a snapshot reflects exactly the deltas at or below
+/// its `as_of_seq`. The thread here runs ahead of the projection (events not
+/// yet drained, as under load); the snapshot catches the projection up first,
+/// and nothing it contains is announced again afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_reflects_exactly_the_deltas_at_or_below_its_seq() {
+    let harness = Harness::start();
+
+    harness.update(text_chunk("Hello"));
+    // Into the thread, NOT drained: the projection is behind.
+    for chunk in [", wor", "ld"] {
+        let update: acp::SessionUpdate = serde_json::from_value(text_chunk(chunk)).unwrap();
+        lock(&harness.thread).handle_session_update(update).unwrap();
+    }
+
+    let snapshot = harness
+        .projector
+        .snapshot(&harness.session_id, true, None)
+        .expect("the session is projected");
+    assert_eq!(
+        Some(snapshot.as_of_seq),
+        seqs(&harness).last().copied(),
+        "the catch-up was announced, and the snapshot is as of it"
+    );
+    assert_eq!(snapshot.messages.len(), 1);
+    assert_eq!(snapshot.messages[0].content, "Hello, world");
+
+    // Draining the stale events now says nothing new...
+    harness.pump();
+    assert_eq!(Some(snapshot.as_of_seq), seqs(&harness).last().copied());
+
+    // ...and what comes later is above it, and applies on top cleanly.
+    harness.update(text_chunk("!"));
+    let after: Vec<SessionDeltaEnvelope> = harness
+        .recorder
+        .envelopes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|envelope| envelope.seq > snapshot.as_of_seq)
+        .cloned()
+        .collect();
+    let mut text = snapshot.messages[0].content.clone();
+    for envelope in after {
+        if let SessionDelta::TextChunk { delta, .. } = envelope.delta {
+            text.push_str(&delta);
+        }
+    }
+    assert_eq!(
+        text, "Hello, world!",
+        "nothing applied twice, nothing missed"
+    );
+}
+
+/// A client that joins (or a window that reloads) while the agent waits on a
+/// permission must be able to answer it: the snapshot hands back the open
+/// prompt by the id its delta carried, and forgets it once answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_hands_back_the_open_permission_prompt() {
+    let harness = Harness::start();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Write a.txt",
+        "kind": "edit",
+        "status": "pending",
+        "rawInput": { "path": "a.txt" },
+    }));
+    let waiter = lock(&harness.thread)
+        .request_tool_call_authorization(
+            acp::ToolCallUpdate::new(
+                acp::ToolCallId::new("call-1"),
+                acp::ToolCallUpdateFields::default(),
+            ),
+            PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                "allow_once",
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            )]),
+            AuthorizationKind::PermissionGrant,
+        )
+        .expect("the prompt opens");
+    harness.pump();
+
+    let request_id = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .find_map(|delta| match delta {
+            SessionDelta::PermissionRequest { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .expect("a permission request");
+
+    let snapshot = harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .expect("projected");
+    assert_eq!(snapshot.pending_permissions.len(), 1);
+    let pending = &snapshot.pending_permissions[0];
+    assert_eq!(pending.request_id, request_id);
+    assert_eq!(pending.tool_call["toolCallId"], "call-1");
+    assert_eq!(pending.options[0]["optionId"], "allow_once");
+
+    lock(&harness.thread).authorize_tool_call(
+        acp::ToolCallId::new("call-1"),
+        atlas_acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow_once"),
+            acp::PermissionOptionKind::AllowOnce,
+        ),
+    );
+    waiter.await;
+    harness.pump();
+    let snapshot = harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .expect("projected");
+    assert!(snapshot.pending_permissions.is_empty());
+}
+
+/// The elicitation counterpart: the newest unanswered one comes back with the
+/// id the wire carried.
+#[test]
+fn a_snapshot_hands_back_the_waiting_elicitation() {
+    let harness = Harness::start();
+    let request: acp::CreateElicitationRequest = serde_json::from_value(serde_json::json!({
+        "mode": "form",
+        "sessionId": "sess-1",
+        "message": "Which environment?",
+        "requestedSchema": { "type": "object" },
+    }))
+    .unwrap();
+    let (entry_id, _response) = lock(&harness.thread).request_elicitation(request).unwrap();
+    harness.pump();
+    let request_id = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .find_map(|delta| match delta {
+            SessionDelta::ElicitationRequested { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .unwrap();
+
+    let pending = harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .unwrap()
+        .pending_elicitation
+        .expect("still waiting");
+    assert_eq!(pending.request_id, request_id);
+    assert_eq!(pending.message, "Which environment?");
+
+    lock(&harness.thread).cancel_elicitation(&entry_id);
+    assert!(harness
+        .projector
+        .snapshot(&harness.session_id, false, None)
+        .unwrap()
+        .pending_elicitation
+        .is_none());
+}
+
+/// The native agent raises no event for a mode it was set to; an ACP agent
+/// echoes one. The host announces the change either way, and the echo is not
+/// a second change.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mode_change_is_said_once_whoever_says_it() {
+    let harness = Harness::start();
+
+    harness
+        .projector
+        .note_mode_changed(&harness.session_id, "plan", Some(Origin::Local));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "current_mode_update",
+        "currentModeId": "plan",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "current_mode_update",
+        "currentModeId": "default",
+    }));
+    harness.pump();
+
+    let modes: Vec<(String, Option<Origin>)> = harness
+        .recorder
+        .deltas()
+        .into_iter()
+        .filter_map(|delta| match delta {
+            SessionDelta::ModeChanged { mode_id, origin } => Some((mode_id, origin)),
+            _ => None,
+        })
+        .collect();
+    // The host's announcement names who set it; the agent's own change
+    // (nobody through the host) names nobody.
+    assert_eq!(
+        modes,
+        [
+            ("plan".to_string(), Some(Origin::Local)),
+            ("default".to_string(), None)
+        ]
+    );
+}
+
+/// The host serves the projection's announced view as its snapshot whenever a
+/// projection exists, and the thread-built list only as a fallback. The two
+/// must agree on everything a reload reads — in particular a turn's
+/// "Worked for" / "Stopped after" — or the RC path silently loses it.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_announced_snapshot_carries_turn_timing_like_the_thread_built_one() {
+    let harness = Harness::start();
+    lock(&harness.thread).push_user_content_block(None, user_text("first"));
+    lock(&harness.thread).begin_turn();
+    harness.update(serde_json::json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "call-1",
+        "title": "Read a.rs",
+        "kind": "read",
+        "status": "completed",
+    }));
+    harness.update(serde_json::json!({
+        "sessionUpdate": "agent_message_chunk",
+        "content": { "type": "text", "text": "done" },
+    }));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    lock(&harness.thread).end_turn(acp::StopReason::EndTurn);
+    harness.pump();
+
+    let announced = harness
+        .projector
+        .snapshot(&harness.session_id, true, None)
+        .expect("the session is projected")
+        .messages;
+    let built = atlas_agent_delta::project::snapshot_messages(&lock(&harness.thread), None);
+
+    let timing =
+        |messages: &[atlas_agent_delta::Message]| -> Vec<(bool, Option<u64>, Option<String>)> {
+            messages
+                .iter()
+                .map(|m| (m.timestamp_approximate, m.worked_ms, m.stop_reason.clone()))
+                .collect()
+        };
+    assert_eq!(
+        timing(&announced),
+        timing(&built),
+        "{announced:#?}\nvs\n{built:#?}"
+    );
+    let last = announced.last().expect("the reply is a message");
+    assert!(last.worked_ms.unwrap() >= 5, "{last:?}");
+    assert_eq!(last.stop_reason.as_deref(), Some("end_turn"));
 }

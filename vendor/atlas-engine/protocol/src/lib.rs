@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 pub mod account;
 mod agent_path;
 pub mod auth;
@@ -36,6 +37,7 @@ pub mod protocol;
 pub mod request_permissions;
 pub mod request_user_input;
 pub mod review_format;
+pub mod schema_compat;
 pub mod security_risk;
 pub mod shell_environment;
 pub mod turn_input;

@@ -55,11 +55,11 @@ function conv(
   };
 }
 
-import { EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { createElement, createRef } from "react";
+import { act, render, waitFor } from "@testing-library/react";
 
 import { useMembersStore } from "@/features/organisations/stores/members-store";
-import { getMentions, insertMention, mentionExtension } from "./cm-mention-extension";
+import { ChatInput, type ChatInputHandle } from "../components/chat-input";
 import {
   MENTION_CATEGORIES,
   categoryForKind,
@@ -297,27 +297,37 @@ describe("a recorded session is not a past session", () => {
     );
   });
 
-  it("renders as a chip with a different icon", () => {
-    const view = editor();
-    insertMention(view, past, 0, 0);
-    insertMention(view, recorded, view.state.doc.length, view.state.doc.length);
-    const chips = [...view.dom.querySelectorAll<HTMLElement>(".atlas-mention-chip")];
+  it("renders as a chip with a different icon", async () => {
+    const { input, dom, unmount } = composer();
+    act(() => {
+      input.insertMention(past);
+      input.insertMention(recorded);
+    });
+    const chips = await chipsIn(dom, 2);
     expect(chips.map((c) => c.dataset.mentionKind)).toEqual(["past_session", "recorded_session"]);
     const icon = (c: HTMLElement) => c.querySelector(".atlas-mention-chip__icon")!.innerHTML;
     expect(icon(chips[0])).not.toBe(icon(chips[1]));
-    view.destroy();
+    unmount();
   });
 });
 
-function editor(): EditorView {
-  const parent = document.createElement("div");
-  document.body.appendChild(parent);
-  return new EditorView({ state: EditorState.create({ extensions: [mentionExtension] }), parent });
+/** The session composer, mounted. */
+function composer() {
+  const ref = createRef<ChatInputHandle>();
+  const { container, unmount } = render(createElement(ChatInput, { ref, projectPath: PROJECT }));
+  return { input: ref.current!, dom: container, unmount };
+}
+
+/** The chips' views, once React has mounted them (a node view renders a
+ *  microtask after its node lands). */
+async function chipsIn(dom: HTMLElement, count: number): Promise<HTMLElement[]> {
+  await waitFor(() => expect(dom.querySelectorAll(".atlas-mention-chip")).toHaveLength(count));
+  return [...dom.querySelectorAll<HTMLElement>(".atlas-mention-chip")];
 }
 
 describe("inserting an organisation mention", () => {
-  it("writes its short form and keeps the mention for the send", () => {
-    const view = editor();
+  it("writes its short form and keeps the mention for the send", async () => {
+    const { input, dom, unmount } = composer();
     const grace: MentionData = {
       kind: "member",
       id: "u-grace",
@@ -330,19 +340,17 @@ describe("inserting an organisation mention", () => {
       displayName: "general",
       conversationKind: "channel",
     };
-    view.dispatch({ changes: { from: 0, insert: "send it to " } });
-    insertMention(view, grace, view.state.doc.length, view.state.doc.length);
-    view.dispatch({ changes: { from: view.state.doc.length, insert: "in " } });
-    insertMention(view, general, view.state.doc.length, view.state.doc.length);
-    expect(view.state.doc.toString()).toBe(
-      'send it to @member:"Grace Hopper" in @conversation:general ',
-    );
-    expect(getMentions(view)).toEqual([grace, general]);
-    const kinds = [...view.dom.querySelectorAll<HTMLElement>(".atlas-mention-chip")].map(
-      (c) => c.dataset.mentionKind,
-    );
+    act(() => {
+      input.insertText("send it to ");
+      input.insertMention(grace);
+      input.insertText("in ");
+      input.insertMention(general);
+    });
+    expect(input.getValue()).toBe('send it to @member:"Grace Hopper" in @conversation:general ');
+    expect(input.getMentions()).toEqual([grace, general]);
+    const kinds = (await chipsIn(dom, 2)).map((c) => c.dataset.mentionKind);
     expect(kinds).toEqual(["member", "conversation"]);
-    view.destroy();
+    unmount();
   });
 });
 
@@ -378,6 +386,6 @@ describe("sending", () => {
     });
     const composed = await composePrompt("send it", mentions);
     expect(invoke).toHaveBeenCalledWith("compose_prompt", { prose: "send it", mentions });
-    expect(composed).toEqual({ prose: "send it", resourceLinks: links });
+    expect(composed).toEqual({ prose: "send it", resourceLinks: links, pastedTexts: [] });
   });
 });

@@ -10,7 +10,7 @@
 //! repository. A branch GitHub does not have (unpushed, detached HEAD) costs a
 //! second call, for the default branch, whose authors mostly overlap.
 //!
-//! The result says why there is nothing, exactly as `git_pr` does:
+//! The result says why there is nothing, from `git_pr`'s outcome:
 //! [`RepoAvatars::Unavailable`] stops the caller asking for the session,
 //! [`RepoAvatars::Failed`] is about this repository now. Neither is an `Err`:
 //! the caller falls back to Gravatar, and no avatar is worth a toast.
@@ -71,7 +71,7 @@ pub async fn git_repo_avatars(path: String) -> Result<RepoAvatars, String> {
             // A run that used its whole timeout was offline or stuck, not
             // missing a branch — a second one would hold the shared permit
             // (and stall the PR badges) for nothing.
-            GhOutcome::Failed if started.elapsed() < GH_TIMEOUT => {
+            GhOutcome::Failed(_) if started.elapsed() < GH_TIMEOUT => {
                 run_gh(gh, &path, &gh_api_args(false), GH_TIMEOUT)
             }
             other => other,
@@ -84,7 +84,7 @@ pub async fn git_repo_avatars(path: String) -> Result<RepoAvatars, String> {
             None => RepoAvatars::Failed,
         },
         Ok(GhOutcome::Missing | GhOutcome::AuthRequired) => RepoAvatars::Unavailable,
-        Ok(GhOutcome::Failed) => RepoAvatars::Failed,
+        Ok(GhOutcome::Failed(_)) => RepoAvatars::Failed,
         Err(e) => {
             tracing::warn!(error = %e, "gh api commits task failed");
             RepoAvatars::Failed

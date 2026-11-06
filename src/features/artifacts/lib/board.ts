@@ -12,7 +12,8 @@
  */
 
 import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
-import { agentMeta } from "@/features/agents/lib/agent-meta";
+import type { AgentMetaResolver } from "@/features/agents/lib/agent-identity";
+import { formatWith } from "@/lib/format-time";
 
 import type { BoardSession, SessionSummary } from "../types";
 
@@ -199,17 +200,20 @@ export function stripAgentMarkup(title: string): string {
   return "";
 }
 
-/** The agent's display name, from the plugin id the wire carries. */
-export function agentLabel(agent: string): string {
-  if (agent.includes("claude")) return "Claude Code";
-  if (agent.includes("codex")) return "Codex";
-  if (agent.includes("opencode")) return "OpenCode";
-  if (agent.includes("cursor")) return "Cursor";
-  if (agent.includes("kilo")) return "Kilo";
-  if (agent.includes("atlas-agent")) return "Atlas";
-  // Registry-installed external agent: resolve its marketplace name (falls
-  // back to a prettified id for purged metadata).
-  return agentMeta(agent).label;
+/** The agent's display name, from the plugin id the wire carries.
+ *
+ *  `resolveAgent` names registry-installed agents. A container passes
+ *  `useAgentMetaResolver()` (or `agentMeta` outside React); there is no
+ *  default, so a caller that forgets it is a type error, not a store read. */
+export function agentLabel(agent: string, resolveAgent: AgentMetaResolver): string {
+  const meta = resolveAgent(agent);
+  // The board names the native agent "Atlas", shorter than its catalog name.
+  if (meta.firstPartyIcon === "atlas-agent") return "Atlas";
+  // Everything else is its identity's label: a first-party agent's static
+  // name, an external agent's registry name, or a prettified id for purged
+  // metadata. Never a substring match on the id (ADR-0002): a third-party
+  // `claude-foo` is not Claude Code.
+  return meta.label;
 }
 
 /** Local midnight, the key every day bucket is grouped on. */
@@ -222,18 +226,22 @@ function dayLabel(date: Date): string {
   const days = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86_400_000);
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
-    // The year only earns its space once it is ambiguous.
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-  });
+  return formatWith(
+    date,
+    {
+      weekday: "long",
+      day: "numeric",
+      month: "short",
+      // The year only earns its space once it is ambiguous.
+      year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    },
+    "date",
+  );
 }
 
 /** `Jul 29` — the muted date beside a day label. */
 function shortDate(date: Date): string {
-  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return formatWith(date, { day: "numeric", month: "short" }, "date");
 }
 
 /**
@@ -271,18 +279,22 @@ export function dayHeading(date: Date, now = new Date()): { date: string; day: s
   const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
   const sameYear = date.getFullYear() === now.getFullYear();
   return {
-    date: date.toLocaleDateString(undefined, {
-      month: "long",
-      day: "numeric",
-      // The year only earns its space once it is ambiguous.
-      year: sameYear ? undefined : "numeric",
-    }),
+    date: formatWith(
+      date,
+      {
+        month: "long",
+        day: "numeric",
+        // The year only earns its space once it is ambiguous.
+        year: sameYear ? undefined : "numeric",
+      },
+      "date",
+    ),
     day:
       days === 0
         ? "Today"
         : days === 1
           ? "Yesterday"
-          : date.toLocaleDateString(undefined, { weekday: "long" }),
+          : formatWith(date, { weekday: "long" }, "date"),
   };
 }
 
@@ -324,10 +336,14 @@ function monthLabel(date: Date): string {
   const months = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
   if (months === 0) return "This month";
   if (months === 1) return "Last month";
-  return date.toLocaleDateString(undefined, {
-    month: "long",
-    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
-  });
+  return formatWith(
+    date,
+    {
+      month: "long",
+      year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+    },
+    "date",
+  );
 }
 
 const LABEL_OF: Record<GroupPeriod, (d: Date) => string> = {
@@ -420,7 +436,7 @@ export interface Facet {
 }
 
 /** Every filter option the current board offers, with its row count. */
-export function facets(sessions: BoardSession[]): Facet[] {
+export function facets(sessions: BoardSession[], resolveAgent: AgentMetaResolver): Facet[] {
   const collect = (
     key: FacetKey,
     label: string,
@@ -452,7 +468,13 @@ export function facets(sessions: BoardSession[]): Facet[] {
       (s) => [s.projectPath],
       (v) => v.split("/").pop() ?? v,
     ),
-    collect("agent", "Agent", "All agents", (s) => (s.agent ? [s.agent] : []), agentLabel),
+    collect(
+      "agent",
+      "Agent",
+      "All agents",
+      (s) => (s.agent ? [s.agent] : []),
+      (v) => agentLabel(v, resolveAgent),
+    ),
     collect(
       "model",
       "Model",

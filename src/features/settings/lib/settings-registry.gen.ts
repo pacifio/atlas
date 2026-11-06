@@ -1,6 +1,6 @@
 // Generated from src-tauri/settings-registry.toml — do not edit. Run `bun run settings:gen` after editing that file.
 
-import type { ThemeOverride } from "@/features/theme/resolve-theme";
+import type { ThemeOverride } from "@tryatlas/design/theme";
 
 /**
  * Every key under `[settings]` in `config.toml`, typed. The Rust side is
@@ -21,6 +21,20 @@ export interface AppSettings {
   enableAtlasLogs: boolean;
   /** Show dotfiles and dot-directories in the explorer file tree. */
   showHiddenFiles: boolean;
+  /**
+   * Show a short tip the first time you meet a feature. Which tips you have already seen is
+   * kept in tips.json beside this file; Replay all tips in Settings clears it.
+   */
+  showTips: boolean;
+  /**
+   * The external editor that "Open in <editor>" uses for a file or the project: an id such as
+   * "vscode", "cursor", "zed", "windsurf", "sublime", "xcode" or a JetBrains IDE ("idea",
+   * "webstorm", "pycharm"…), or "system" for the app your system opens the file with. Empty
+   * uses the first editor Atlas finds installed. An id that isn't installed falls back to that
+   * same choice. Files outside the project open in the system's app unless this names an
+   * editor.
+   */
+  preferredEditor: string;
   /**
    * Interface zoom, where 1.0 is 100%. Also driven by Cmd +/-/0. Must be a number between 0.5
    * and 2.0.
@@ -73,14 +87,14 @@ export interface AppSettings {
    */
   appIcon: string;
   /**
-   * Next-step suggestion chips in the agent chat's per-turn card. Exactly "agent" or "off",
+   * Next-step suggestion chips in the session's per-turn card. Exactly "agent" or "off",
    * nothing else.
    */
   adaptiveSuggestions: "agent" | "off";
   /**
-   * What picking another agent does to a chat that has a conversation: "new-tab" keeps it and
-   * opens the new agent in a new tab, "handoff" switches in place and attaches it to the next
-   * message, "reset" switches in place and starts over.
+   * What picking another agent does to a session that has a conversation: "new-tab" keeps it
+   * and opens the new agent in a new tab, "handoff" switches in place and attaches it to the
+   * next message, "reset" switches in place and starts over.
    */
   agentSwitchBehavior: "reset" | "new-tab" | "handoff";
   /**
@@ -219,9 +233,9 @@ export interface AppSettings {
    */
   favoriteModels: string[];
   /**
-   * Ask before deleting a chat from the sidebar or the history. A deleted chat's transcript
-   * stays with its agent, but Atlas forgets the chat. Archiving never asks, because it can be
-   * undone.
+   * Ask before deleting a session from the sidebar or the history. A deleted session's
+   * transcript stays with its agent, but Atlas forgets the session. Settling never asks,
+   * because it can be undone.
    */
   confirmDeleteChat: boolean;
   /**
@@ -230,8 +244,22 @@ export interface AppSettings {
    */
   confirmQuitWhileRunning: boolean;
   /**
-   * The agent a new chat starts with: "atlas-agent" for Atlas Agent, or the id of an installed
-   * ACP agent, such as "claude-code". An agent that isn't installed falls back to Atlas Agent.
+   * When Atlas quits, crashes or restarts to update while an agent is in the middle of a turn,
+   * the next launch opens that session and tells the agent to continue where it left off, with
+   * a row in the transcript saying so. Settled and snoozed sessions are left alone, and a turn
+   * that keeps getting cut short is let go after three tries in a row.
+   */
+  continueSessionsAfterRestart: boolean;
+  /**
+   * A new session starts on the agent you last picked in a composer, by switching or with the
+   * agent shortcut, as long as it is still installed. Off, or before you have picked one, new
+   * sessions start on defaultAgent.
+   */
+  newSessionUsesLastAgent: boolean;
+  /**
+   * The agent a new session starts with: "atlas-agent" for Atlas Agent, or the id of an
+   * installed ACP agent, such as "claude-code". An agent that isn't installed falls back to
+   * Atlas Agent.
    */
   defaultAgent: string;
   /**
@@ -239,13 +267,25 @@ export interface AppSettings {
    * pixels) or "full" (the whole panel).
    */
   chatWidth: "normal" | "wide" | "full";
-  /** Wrap long lines in a chat's code blocks. Off: they keep their lines and scroll sideways. */
-  chatCodeWrap: boolean;
   /**
-   * The order of chats in the sidebar: "recent" puts the chat with the latest activity first,
-   * "created" the one started most recently.
+   * Wrap long lines in file tabs, diffs and a session's code blocks. Off: lines keep their
+   * shape and scroll sideways. The wrap button in a file's or the review diff's header flips
+   * this same setting.
+   */
+  wordWrap: boolean;
+  /**
+   * The order of sessions in the sidebar: "recent" puts the session with the latest activity
+   * first, "created" the one started most recently.
    */
   sidebarSort: "recent" | "created";
+  /**
+   * Days a session may sit idle before Atlas settles it: moves it to the Settled shelf at the
+   * bottom of the session sidebar, where it stays listed and resumable. A session that is
+   * running, waiting for you, pinned, snoozed, or that you un-settled since its last activity
+   * is left alone, and sending to a settled session brings it back. 0 turns auto-settling off;
+   * settling by hand still works. Must be between 0 and 90.
+   */
+  autoSettleAfterDays: number;
   /**
    * The clock for every time of day Atlas shows: "12h", "24h", or "system" to follow your
    * system's region settings.
@@ -253,14 +293,14 @@ export interface AppSettings {
   timeFormat: "system" | "12h" | "24h";
   /**
    * The font for Atlas's interface and chats, as a CSS font-family list such as "Inter,
-   * sans-serif". Empty uses the theme's font-sans if it sets one, else the system font. A font
-   * that isn't installed falls through to the next one in the list.
+   * sans-serif". Empty uses the theme's font-sans if it sets one, else Geist, which Atlas
+   * bundles. A font that isn't installed falls through to the next one in the list.
    */
   uiFontFamily: string;
   /**
    * The font for the editor, diffs and code in chats, as a CSS font-family list such as
-   * "JetBrains Mono, monospace". Empty uses the theme's font-mono if it sets one, else the
-   * platform's monospace font. The terminal uses it too unless terminalFontFamily is set.
+   * "JetBrains Mono, monospace". Empty uses the theme's font-mono if it sets one, else Geist
+   * Mono, which Atlas bundles. The terminal uses it too unless terminalFontFamily is set.
    */
   codeFontFamily: string;
   /** The font for the chat composer, as a CSS font-family list. Empty uses the interface font. */
@@ -287,8 +327,8 @@ export interface AppSettings {
    */
   diffIgnoreWhitespace: boolean;
   /**
-   * Open a diff of several files, such as a commit or your changes, with each file collapsed to
-   * its header. Off: every file starts expanded.
+   * Open a diff, such as your changes or a commit, as a list of its files, each collapsed to
+   * its header; click a file to expand it. Off: every file starts expanded.
    */
   diffFilesCollapsed: boolean;
   /**
@@ -303,6 +343,93 @@ export interface AppSettings {
    * terminal and charts included.
    */
   interfaceContrast: number;
+  /**
+   * The turn rail: a column of short ticks down the left edge of a session's transcript, one
+   * per turn. Hovering a tick previews the prompt and the start of the reply; clicking it jumps
+   * to that turn. Off hides the rail.
+   */
+  showTurnRail: boolean;
+  /**
+   * What sits behind a new, empty session: "glow" is a soft radial glow from the top edge in a
+   * colour from the palette (see welcomeGlowColor), "plain" is the theme's own background.
+   */
+  welcomeBackground: "glow" | "plain";
+  /**
+   * The colour of the new-session glow. "random" picks a different one from the palette each
+   * time a new session opens; any other value always uses that colour. Each has a dark and a
+   * light version, matched to the colour scheme. Has no effect while welcomeBackground is
+   * "plain".
+   */
+  welcomeGlowColor: "random" | "ember" | "plum" | "ocean" | "moss" | "amber" | "teal";
+  /**
+   * Settle a session once its linked pull request merges, when the merge came after you last
+   * worked in the session. A pull request that is closed without merging always settles its
+   * session. Settled sessions stay listed and resumable.
+   */
+  autoSettleOnMerge: boolean;
+  /**
+   * Auto-settling after days of inactivity (autoSettleAfterDays) leaves a session alone while
+   * it has a linked pull request. Merging or closing it can still settle the session
+   * (autoSettleOnMerge).
+   */
+  autoSettleKeepPullRequests: boolean;
+  /**
+   * When a session watches its pull request (the agent asked to, or you turned the watch on), a
+   * failing check, a new review or comment, or a conflict with the base sends the session's
+   * agent an update so it can act. Off: watches still track the pull request but never prompt
+   * an agent.
+   */
+  pullRequestWatchWakes: boolean;
+  /**
+   * Open a pull request link from a session, the sidebar or a transcript in Atlas's pull
+   * request tab when it belongs to the project's repository. Off, or a pull request of another
+   * repository: it opens in the browser.
+   */
+  pullRequestLinksOpenInApp: boolean;
+  /**
+   * The method a pull request's Merge button starts on: "merge", "squash" or "rebase", or
+   * "last" for whichever you picked most recently on this device. A method the repository
+   * doesn't allow falls back to one it does.
+   */
+  pullRequestMergeMethod: "last" | "merge" | "squash" | "rebase";
+  /**
+   * Remove recognized agent credit lines (an agent's Co-Authored-By trailer, a "Generated with"
+   * footer) from the message of a merge or squash Atlas performs, auto-merge included. Human
+   * co-authors are kept. Commits already on the branch are not rewritten.
+   */
+  removeAgentCreditsOnMerge: boolean;
+  /**
+   * Show the Guide tab on pull requests, where an agent writes a tour of the change in reading
+   * order, with the calls a maintainer should make. The agent reads a checkout of the pull
+   * request's head and changes nothing.
+   */
+  pullRequestGuideEnabled: boolean;
+  /**
+   * The agent that writes review guides: "atlas-agent" or an installed ACP agent's id, such as
+   * "claude-code". Empty uses defaultAgent. An agent that isn't installed falls back to Atlas
+   * Agent.
+   */
+  pullRequestGuideAgent: string;
+  /**
+   * The model the guide's agent runs on, as that agent names it (the id after the colon in
+   * favoriteModels). The guide reads the change over many steps, so a stronger model helps.
+   * Empty keeps the agent's default; a model the agent doesn't offer is ignored.
+   */
+  pullRequestGuideModel: string;
+  /**
+   * Your preferences for review guides, added to the guide's prompt: what to show first, dwell
+   * on or skip, and how long summaries should be. The guide's format and its coverage of every
+   * changed file stay the same.
+   */
+  pullRequestGuideInstructions: string;
+  /**
+   * Scan each new checkpoint's commit in the background for leaked credentials, risky calls and
+   * dependencies with known advisories. Runs entirely on this machine; only the public advisory
+   * lists are downloaded. Results are stored with the checkpoint and not shown yet. Commits
+   * from before it was turned on are not scanned. Off in released builds and on in development
+   * builds unless this key is set.
+   */
+  securityScan: boolean;
 }
 
 export type SettingKey = keyof AppSettings;
@@ -311,6 +438,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoAddAtlasGitignore: true,
   enableAtlasLogs: true,
   showHiddenFiles: true,
+  showTips: true,
+  preferredEditor: "",
   uiScale: 1,
   shareTelemetry: true,
   linkTelemetryToAccount: true,
@@ -354,10 +483,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   favoriteModels: [],
   confirmDeleteChat: true,
   confirmQuitWhileRunning: true,
+  continueSessionsAfterRestart: true,
+  newSessionUsesLastAgent: true,
   defaultAgent: "atlas-agent",
   chatWidth: "normal",
-  chatCodeWrap: true,
+  wordWrap: true,
   sidebarSort: "recent",
+  autoSettleAfterDays: 3,
   timeFormat: "system",
   uiFontFamily: "",
   codeFontFamily: "",
@@ -366,9 +498,23 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editorFontSize: 13,
   terminalFontSize: 13,
   diffIgnoreWhitespace: false,
-  diffFilesCollapsed: false,
+  diffFilesCollapsed: true,
   diffPalette: "theme",
   interfaceContrast: 100,
+  showTurnRail: true,
+  welcomeBackground: "glow",
+  welcomeGlowColor: "random",
+  autoSettleOnMerge: true,
+  autoSettleKeepPullRequests: true,
+  pullRequestWatchWakes: true,
+  pullRequestLinksOpenInApp: true,
+  pullRequestMergeMethod: "last",
+  removeAgentCreditsOnMerge: false,
+  pullRequestGuideEnabled: true,
+  pullRequestGuideAgent: "",
+  pullRequestGuideModel: "",
+  pullRequestGuideInstructions: "",
+  securityScan: false,
 };
 
 export type SettingType =
@@ -401,8 +547,8 @@ export const SETTINGS_PAGES = [
   },
   {
     id: "chat",
-    title: "Chat",
-    description: "New chats, the composer, layout, and switching agents.",
+    title: "Sessions",
+    description: "New sessions, the composer, layout, and switching agents.",
   },
   {
     id: "agents",
@@ -425,6 +571,11 @@ export const SETTINGS_PAGES = [
     id: "source-control",
     title: "Source Control",
     description: "Git in the editor, diffs, and in the background.",
+  },
+  {
+    id: "pull-requests",
+    title: "Pull Requests",
+    description: "Merging, sessions with a pull request, links, and review guides.",
   },
   {
     id: "privacy",
@@ -488,6 +639,24 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Files",
     title: "Show hidden files",
     summary: "Show dotfiles and dot-directories in the explorer file tree.",
+  },
+  {
+    key: "showTips",
+    type: "boolean",
+    status: "live",
+    page: "general",
+    section: "Tips",
+    title: "Show tips",
+    summary: "Show a short tip the first time you meet a feature.",
+  },
+  {
+    key: "preferredEditor",
+    type: "string",
+    status: "live",
+    page: "general",
+    section: "Files",
+    title: "Preferred editor",
+    summary: "The external editor that Open in Editor uses for files and projects.",
   },
   {
     key: "uiScale",
@@ -603,8 +772,8 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     status: "live",
     page: "chat",
     section: "Switching agents",
-    title: "Switching agents in a chat",
-    summary: "What picking another agent does once a chat has a conversation.",
+    title: "Switching agents in a session",
+    summary: "What picking another agent does once a session has a conversation.",
     values: ["reset", "new-tab", "handoff"],
   },
   {
@@ -897,8 +1066,8 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     status: "live",
     page: "general",
     section: "Confirmations",
-    title: "Confirm before deleting a chat",
-    summary: "Ask first when you delete a chat from the sidebar or history.",
+    title: "Confirm before deleting a session",
+    summary: "Ask first when you delete a session from the sidebar or history.",
   },
   {
     key: "confirmQuitWhileRunning",
@@ -910,13 +1079,33 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     summary: "Ask first when you quit Atlas with an agent in the middle of a turn.",
   },
   {
+    key: "continueSessionsAfterRestart",
+    type: "boolean",
+    status: "live",
+    page: "chat",
+    section: "Running sessions",
+    title: "Continue sessions after a restart",
+    summary:
+      "A turn cut short when Atlas quits, crashes or updates carries on when Atlas opens again.",
+  },
+  {
+    key: "newSessionUsesLastAgent",
+    type: "boolean",
+    status: "live",
+    page: "chat",
+    section: "New sessions",
+    title: "Start with the last agent you picked",
+    summary:
+      "A new session starts on the agent you last chose in a composer, instead of the default agent.",
+  },
+  {
     key: "defaultAgent",
     type: "string",
     status: "live",
     page: "chat",
-    section: "New chats",
+    section: "New sessions",
     title: "Default agent",
-    summary: "The agent a new chat starts with.",
+    summary: "The agent a new session starts with.",
     project: true,
   },
   {
@@ -925,18 +1114,19 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     status: "live",
     page: "appearance",
     section: "Interface",
-    title: "Chat width",
+    title: "Session width",
     summary: "How wide the conversation and the composer may grow.",
     values: ["normal", "wide", "full"],
   },
   {
-    key: "chatCodeWrap",
+    key: "wordWrap",
     type: "boolean",
     status: "live",
-    page: "chat",
-    section: "Layout",
-    title: "Wrap code in chat",
-    summary: "Wrap long lines in a chat's code blocks instead of scrolling sideways.",
+    page: "appearance",
+    section: "Interface",
+    title: "Word wrap",
+    summary:
+      "Wrap long lines in files, diffs and a session's code blocks instead of scrolling sideways.",
   },
   {
     key: "sidebarSort",
@@ -944,9 +1134,21 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     status: "live",
     page: "chat",
     section: "Layout",
-    title: "Sort chats by",
-    summary: "Order the sidebar's chats by their latest activity or by when they started.",
+    title: "Sort sessions by",
+    summary: "Order the sidebar's sessions by their latest activity or by when they started.",
     values: ["recent", "created"],
+  },
+  {
+    key: "autoSettleAfterDays",
+    type: "integer",
+    status: "live",
+    page: "chat",
+    section: "Layout",
+    title: "Settle idle sessions after",
+    summary:
+      "A session with no activity for this many days moves to the sidebar's Settled shelf. 0 turns this off.",
+    min: 0,
+    max: 90,
   },
   {
     key: "timeFormat",
@@ -966,7 +1168,7 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Typography",
     title: "Interface font",
     summary:
-      "The font for everything outside code and the terminal. Empty follows the theme, else the system font.",
+      "The font for everything outside code and the terminal. Empty follows the theme, else Geist.",
   },
   {
     key: "codeFontFamily",
@@ -976,7 +1178,7 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     section: "Typography",
     title: "Code font",
     summary:
-      "The font for the editor, diffs and code in chats. Empty follows the theme, else the default.",
+      "The font for the editor, diffs and code in chats. Empty follows the theme, else Geist Mono.",
   },
   {
     key: "composerFontFamily",
@@ -1034,7 +1236,7 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     page: "source-control",
     section: "Diffs",
     title: "Start files collapsed",
-    summary: "Open a diff of several files with each one collapsed to its header.",
+    summary: "Open a diff with each file collapsed to its header.",
   },
   {
     key: "diffPalette",
@@ -1056,5 +1258,145 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     summary: "Strengthen or soften borders and secondary text across the interface.",
     min: 50,
     max: 200,
+  },
+  {
+    key: "showTurnRail",
+    type: "boolean",
+    status: "live",
+    page: "appearance",
+    section: "Interface",
+    title: "Turn rail",
+    summary:
+      "Show a tick for each turn down the left edge of a session. Hover one to preview it, click it to jump there.",
+  },
+  {
+    key: "welcomeBackground",
+    type: "enum",
+    status: "live",
+    page: "appearance",
+    section: "Interface",
+    title: "New session background",
+    summary: "A coloured glow behind a new session, or the plain background.",
+    values: ["glow", "plain"],
+  },
+  {
+    key: "welcomeGlowColor",
+    type: "enum",
+    status: "live",
+    page: "appearance",
+    section: "Interface",
+    title: "Glow colour",
+    summary: "A different colour each time, or always the same one.",
+    values: ["random", "ember", "plum", "ocean", "moss", "amber", "teal"],
+  },
+  {
+    key: "autoSettleOnMerge",
+    type: "boolean",
+    status: "live",
+    page: "pull-requests",
+    section: "Sessions",
+    title: "Settle sessions when their pull request merges",
+    summary: "Move a session to Settled once its pull request merges or closes.",
+  },
+  {
+    key: "autoSettleKeepPullRequests",
+    type: "boolean",
+    status: "live",
+    page: "pull-requests",
+    section: "Sessions",
+    title: "Keep sessions with a pull request from settling",
+    summary: "Idle auto-settling leaves a session with a linked pull request alone.",
+  },
+  {
+    key: "pullRequestWatchWakes",
+    type: "boolean",
+    status: "live",
+    page: "pull-requests",
+    section: "Sessions",
+    title: "Let agents act on watched pull requests",
+    summary:
+      "A watched pull request can prompt its session's agent when checks fail, reviews arrive or it conflicts.",
+  },
+  {
+    key: "pullRequestLinksOpenInApp",
+    type: "boolean",
+    status: "live",
+    page: "pull-requests",
+    section: "Links",
+    title: "Open pull request links in Atlas",
+    summary: "Open a pull request of the project's repository in a tab instead of the browser.",
+  },
+  {
+    key: "pullRequestMergeMethod",
+    type: "enum",
+    status: "live",
+    page: "pull-requests",
+    section: "Merging",
+    title: "Default merge method",
+    summary:
+      "The method a pull request's Merge button starts on. Last used reuses your latest pick.",
+    values: ["last", "merge", "squash", "rebase"],
+    project: true,
+  },
+  {
+    key: "removeAgentCreditsOnMerge",
+    type: "boolean",
+    status: "live",
+    page: "pull-requests",
+    section: "Merging",
+    title: "Remove agent credits when merging",
+    summary:
+      "Drop agent co-author and attribution lines from merge and squash messages, keeping human co-authors.",
+    project: true,
+  },
+  {
+    key: "pullRequestGuideEnabled",
+    type: "boolean",
+    status: "live",
+    page: "pull-requests",
+    section: "Review guide",
+    title: "Review guides",
+    summary: "A Guide tab on pull requests: an agent writes a tour of the change, stop by stop.",
+    project: true,
+  },
+  {
+    key: "pullRequestGuideAgent",
+    type: "string",
+    status: "live",
+    page: "pull-requests",
+    section: "Review guide",
+    title: "Guide agent",
+    summary: "The agent that writes review guides. Empty uses the default agent for new sessions.",
+    project: true,
+  },
+  {
+    key: "pullRequestGuideModel",
+    type: "string",
+    status: "live",
+    page: "pull-requests",
+    section: "Review guide",
+    title: "Guide model",
+    summary: "The model the guide's agent runs on. Empty keeps the agent's own default.",
+    project: true,
+  },
+  {
+    key: "pullRequestGuideInstructions",
+    type: "string",
+    status: "live",
+    page: "pull-requests",
+    section: "Review guide",
+    title: "Guide instructions",
+    summary: "Your preferences for review guides: what to show first, dwell on, or skip.",
+    project: true,
+  },
+  {
+    key: "securityScan",
+    type: "boolean",
+    status: "file-only",
+    page: "privacy",
+    section: "Security scan",
+    title: "Scan new checkpoints for security issues",
+    summary:
+      "Check each new checkpoint's commit for leaked credentials, risky code and vulnerable dependencies, on this machine.",
   },
 ];

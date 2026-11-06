@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { RotateCw } from "lucide-react";
 import { useChatStore } from "../stores/chat-store";
+import { ChatNoticeView } from "./views/chat-notice-view";
 
 /**
  * Live retry countdown (native agent): shown while a transient provider
@@ -36,17 +36,16 @@ export function RetryPill({ tabId }: { tabId: string }) {
   const cause = retry.lastError.split("\n")[0].slice(0, 80);
 
   return (
-    <div
-      data-testid="retry-pill"
-      className="mb-2 flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-xs text-[var(--secondary-foreground)]"
-      title={retry.lastError}
-    >
-      <RotateCw size={12} className="animate-spin text-[var(--muted-foreground)]" />
-      <span className="font-medium text-[var(--foreground)]">
-        Retrying {retry.attempt}/{retry.maxAttempts}
-        {secs > 0 ? ` in ${secs}s` : "…"}
+    <ChatNoticeView placement="above" busy data-testid="retry-pill" title={retry.lastError}>
+      {/* One line: the cause truncates rather than wrapping the card taller
+          while the countdown ticks. */}
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 font-medium text-foreground">
+          Retrying {retry.attempt}/{retry.maxAttempts}
+          {secs > 0 ? ` in ${secs}s` : "…"}
+        </span>
+        <span className="truncate text-muted-foreground">{cause}</span>
       </span>
-      <span className="truncate text-[var(--muted-foreground)]">{cause}</span>
-    </div>
+    </ChatNoticeView>
   );
 }

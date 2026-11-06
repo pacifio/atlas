@@ -1,0 +1,18 @@
+# Mirrors what oxfmt (TS/JS/JSON/CSS) and rustfmt produce, so an editor without
+# those plugins still writes files the format gate accepts.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown uses a trailing double space as a hard line break.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.rs]
+indent_size = 4

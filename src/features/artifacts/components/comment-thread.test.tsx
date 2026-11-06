@@ -154,6 +154,23 @@ describe("editing a comment", () => {
     expect(edit).not.toHaveBeenCalled();
   });
 
+  it("leaves Enter to an input method that is still composing", async () => {
+    const edit = vi.fn(async () => {});
+    open([comment()], edit);
+    fireEvent.click(screen.getByRole("button", { name: "Edit comment" }));
+    fireEvent.change(field(), { target: { value: "にほん" } });
+    await act(async () => {
+      fireEvent.keyDown(field(), { key: "Enter", isComposing: true });
+      fireEvent.keyDown(field(), { key: "Enter", keyCode: 229 });
+    });
+    expect(edit).not.toHaveBeenCalled();
+    expect(field()).toBeTruthy();
+    await act(async () => {
+      fireEvent.keyDown(field(), { key: "Enter" });
+    });
+    expect(edit).toHaveBeenCalledTimes(1);
+  });
+
   it("Escape leaves the edit and hands focus back to the pencil", () => {
     const edit = vi.fn(async () => {});
     open([comment()], edit);

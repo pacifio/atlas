@@ -651,7 +651,7 @@ impl Store {
         // the same silence it exists to prevent.
         self.conn.execute(
             "UPDATE agent_session
-                SET needs_attention = 1, attention_reason = ?2, updated_at = ?3
+                SET needs_attention = 1, attention_reason = ?2, updated_at = ?3, flagged_at = ?3
               WHERE id = ?1",
             rusqlite::params![session_id, reason, Utc::now().to_rfc3339()],
         )?;
@@ -1820,14 +1820,10 @@ impl Store {
         // to the Organisation as finished work. The abort verdict lives only in
         // the local `turn` table, so the server could never learn otherwise.
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {MESSAGE_COLUMNS} FROM agent_message m
+            "SELECT {MESSAGE_COLUMNS} FROM agent_message x
               WHERE sync_state = 'pending'
                 AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
-                AND NOT EXISTS (
-                    SELECT 1 FROM turn t
-                     WHERE t.session_id = m.session_id
-                       AND t.turn_seq = m.turn_seq
-                       AND t.state = 'aborted')
+                {NOT_IN_ABORTED_TURN}
               ORDER BY seq LIMIT ?2"
         ))?;
         let messages = stmt
@@ -1857,14 +1853,10 @@ impl Store {
         }
 
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT {TOOL_CALL_COLUMNS} FROM tool_call c
+            "SELECT {TOOL_CALL_COLUMNS} FROM tool_call x
               WHERE sync_state = 'pending'
                 AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
-                AND NOT EXISTS (
-                    SELECT 1 FROM turn t
-                     WHERE t.session_id = c.session_id
-                       AND t.turn_seq = c.turn_seq
-                       AND t.state = 'aborted')
+                {NOT_IN_ABORTED_TURN}
               ORDER BY seq LIMIT ?2"
         ))?;
         let calls = stmt
@@ -2204,6 +2196,210 @@ impl Store {
         ))?;
         let rows = stmt.query_map([session_id], row_to_checkpoint)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn checkpoint(&self, id: &str) -> Result<Option<Checkpoint>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {CHECKPOINT_COLUMNS} FROM checkpoint WHERE id = ?1"),
+                [id],
+                row_to_checkpoint,
+            )
+            .optional()?)
+    }
+
+    /// Checkpoints the security scanner still owes a result for, oldest first.
+    ///
+    /// Linked Checkpoints created at or after `since` with no finished
+    /// (`done` or `partial`) row for `scanner_version`, and fewer than
+    /// [`SCAN_MAX_ATTEMPTS`] failed attempts — so a commit that can no longer
+    /// be read is tried a bounded number of times and then left alone.
+    pub fn scan_backlog(
+        &self,
+        scanner_version: &str,
+        since: DateTime<Utc>,
+        limit: i64,
+    ) -> Result<Vec<Checkpoint>> {
+        let columns = CHECKPOINT_COLUMNS
+            .split(", ")
+            .map(|c| format!("c.{}", c.trim()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {columns} FROM checkpoint c
+              LEFT JOIN checkpoint_scan s
+                ON s.checkpoint_id = c.id AND s.scanner_version = ?1
+              WHERE c.link_state = 'linked'
+                AND c.created_at >= ?2
+                AND (s.checkpoint_id IS NULL
+                     OR (s.status = 'failed' AND s.attempts < ?3))
+              ORDER BY c.created_at
+              LIMIT ?4"
+        ))?;
+        let rows = stmt.query_map(
+            rusqlite::params![
+                scanner_version,
+                since.to_rfc3339(),
+                SCAN_MAX_ATTEMPTS,
+                limit
+            ],
+            row_to_checkpoint,
+        )?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Store a scan result. A second write for the same Checkpoint and
+    /// scanner version replaces the first and counts one more attempt.
+    pub fn put_scan(&self, row: &ScanRow) -> Result<()> {
+        self.require_writer()?;
+        self.conn.execute(
+            "INSERT INTO checkpoint_scan
+                (checkpoint_id, scanner_version, status, level, blocking,
+                 result_json, attempts, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)
+             ON CONFLICT (checkpoint_id, scanner_version) DO UPDATE SET
+                status = excluded.status,
+                level = excluded.level,
+                blocking = excluded.blocking,
+                result_json = excluded.result_json,
+                created_at = excluded.created_at,
+                attempts = checkpoint_scan.attempts + 1",
+            rusqlite::params![
+                row.checkpoint_id,
+                row.scanner_version,
+                row.status,
+                row.level,
+                row.blocking,
+                row.result_json,
+                row.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn scan_for(&self, checkpoint_id: &str, scanner_version: &str) -> Result<Option<ScanRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!(
+                    "SELECT {SCAN_COLUMNS} FROM checkpoint_scan
+                      WHERE checkpoint_id = ?1 AND scanner_version = ?2"
+                ),
+                rusqlite::params![checkpoint_id, scanner_version],
+                row_to_scan,
+            )
+            .optional()?)
+    }
+
+    /// Every stored scan of the Project's Checkpoints, with its Checkpoint.
+    pub fn scans_for_project(&self, workspace_id: &str) -> Result<Vec<(Checkpoint, ScanRow)>> {
+        let mut out = Vec::new();
+        for session in self.sessions_for_project(workspace_id)? {
+            for checkpoint in self.checkpoints_for_session(&session.id)? {
+                let mut stmt = self.conn.prepare(&format!(
+                    "SELECT {SCAN_COLUMNS} FROM checkpoint_scan WHERE checkpoint_id = ?1"
+                ))?;
+                let rows = stmt.query_map([&checkpoint.id], row_to_scan)?;
+                for row in rows {
+                    out.push((checkpoint.clone(), row?));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every stored scan of `scanner_version`, with its Checkpoint, oldest
+    /// Checkpoint first. One store is one Project, so this is the Project's.
+    pub fn scans(&self, scanner_version: &str) -> Result<Vec<(Checkpoint, ScanRow)>> {
+        let columns = CHECKPOINT_COLUMNS
+            .split(", ")
+            .map(|c| format!("c.{}", c.trim()))
+            .chain(SCAN_COLUMNS.split(", ").map(|c| format!("s.{}", c.trim())))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let width = CHECKPOINT_COLUMNS.split(", ").count();
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {columns} FROM checkpoint_scan s
+               JOIN checkpoint c ON c.id = s.checkpoint_id
+              WHERE s.scanner_version = ?1
+              ORDER BY c.created_at"
+        ))?;
+        let rows = stmt.query_map([scanner_version], |row| {
+            let checkpoint = row_to_checkpoint(row)?;
+            let scan = ScanRow {
+                checkpoint_id: row.get(width)?,
+                scanner_version: row.get(width + 1)?,
+                status: row.get(width + 2)?,
+                level: row.get(width + 3)?,
+                blocking: row.get(width + 4)?,
+                result_json: row.get(width + 5)?,
+                attempts: row.get(width + 6)?,
+                created_at: parse_time(row.get::<_, String>(width + 7)?),
+            };
+            Ok((checkpoint, scan))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Mark a finding "Not useful", or take the mark back.
+    pub fn set_not_useful(
+        &self,
+        fingerprint: &str,
+        rule_id: &str,
+        scanner_version: &str,
+        not_useful: bool,
+    ) -> Result<()> {
+        self.require_writer()?;
+        if not_useful {
+            self.conn.execute(
+                "INSERT INTO security_label (fingerprint, rule_id, scanner_version, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (fingerprint) DO NOTHING",
+                rusqlite::params![
+                    fingerprint,
+                    rule_id,
+                    scanner_version,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM security_label WHERE fingerprint = ?1",
+                [fingerprint],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Fingerprints of every finding marked "Not useful".
+    pub fn not_useful_fingerprints(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT fingerprint FROM security_label")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn scan_state(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM security_scan_state WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_scan_state(&self, key: &str, value: &str) -> Result<()> {
+        self.require_writer()?;
+        self.conn.execute(
+            "INSERT INTO security_scan_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, value],
+        )?;
+        Ok(())
     }
 
     pub fn checkpoints_for_commit(&self, commit_sha: &str) -> Result<Vec<Checkpoint>> {
@@ -2571,12 +2767,20 @@ impl Store {
         Ok(())
     }
 
-    /// Sessions flagged during capture — a redaction or storage failure.
-    pub fn flagged_session_count(&self, workspace_id: &str) -> Result<i64> {
+    /// Sessions flagged during capture — a redaction or storage failure — at
+    /// or after `since`.
+    ///
+    /// Bounded because the flag is permanent: it is a fact about the Session,
+    /// and the Session keeps showing it. Unbounded, one lock timeout weeks ago
+    /// would hold the Project's health banner up forever. Bounded by the
+    /// flag's own time (`flagged_at`), not `updated_at`: every prompt and
+    /// message moves `updated_at`, so an old flag on a Session still in use
+    /// would count as new for as long as anyone worked in it.
+    pub fn flagged_session_count(&self, workspace_id: &str, since: DateTime<Utc>) -> Result<i64> {
         Ok(self.conn.query_row(
             "SELECT COUNT(*) FROM agent_session
-              WHERE workspace_id = ?1 AND needs_attention = 1",
-            [workspace_id],
+              WHERE workspace_id = ?1 AND needs_attention = 1 AND flagged_at >= ?2",
+            rusqlite::params![workspace_id, since.to_rfc3339()],
             |row| row.get(0),
         )?)
     }
@@ -2586,20 +2790,33 @@ impl Store {
     /// Counts Sessions, Messages, tool calls and Checkpoints together, because
     /// "3 pending" should mean three things waiting rather than three of one
     /// arbitrary kind.
+    ///
+    /// Pending excludes rows of aborted turns, which the outbox never sends
+    /// ([`NOT_IN_ABORTED_TURN`]). Counting them would report work as waiting
+    /// to sync that never will be, and the count could never reach zero.
     pub fn row_count_in_state(&self, workspace_id: &str, state: SyncState) -> Result<i64> {
+        let turn_filter = if state == SyncState::Pending {
+            NOT_IN_ABORTED_TURN
+        } else {
+            ""
+        };
         Ok(self.conn.query_row(
-            "SELECT
-               (SELECT COUNT(*) FROM agent_session
-                 WHERE workspace_id = ?1 AND sync_state = ?2)
-             + (SELECT COUNT(*) FROM agent_message
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))
-             + (SELECT COUNT(*) FROM tool_call
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))
-             + (SELECT COUNT(*) FROM checkpoint
-                 WHERE sync_state = ?2
-                   AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))",
+            &format!(
+                "SELECT
+                   (SELECT COUNT(*) FROM agent_session
+                     WHERE workspace_id = ?1 AND sync_state = ?2)
+                 + (SELECT COUNT(*) FROM agent_message x
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
+                       {turn_filter})
+                 + (SELECT COUNT(*) FROM tool_call x
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1)
+                       {turn_filter})
+                 + (SELECT COUNT(*) FROM checkpoint
+                     WHERE sync_state = ?2
+                       AND session_id IN (SELECT id FROM agent_session WHERE workspace_id = ?1))"
+            ),
             rusqlite::params![workspace_id, state.as_str()],
             |row| row.get(0),
         )?)
@@ -2733,6 +2950,15 @@ pub struct AgentEditInput<'a> {
     /// **Already redacted.**
     pub patch: Option<&'a str>,
 }
+
+/// Keeps rows of aborted turns out: appended to a message or tool-call query
+/// whose table is aliased `x`. One string so the outbox and the pending count
+/// cannot disagree about what is waiting to sync.
+const NOT_IN_ABORTED_TURN: &str = "AND NOT EXISTS (
+    SELECT 1 FROM turn t
+     WHERE t.session_id = x.session_id
+       AND t.turn_seq = x.turn_seq
+       AND t.state = 'aborted')";
 
 const TOOL_CALL_COLUMNS: &str = "id, session_id, seq, turn_seq, tool_name, title, kind, status, \
      locations, arguments, arguments_ref, result, result_ref, result_binary, created_at, sync_state";
@@ -2908,6 +3134,26 @@ fn row_to_checkpoint(row: &rusqlite::Row<'_>) -> rusqlite::Result<Checkpoint> {
         attribution: attribution.and_then(|a| serde_json::from_str(&a).ok()),
         created_at: parse_time(row.get::<_, String>(12)?),
         sync_state: SyncState::parse(&sync_state).unwrap_or(SyncState::Local),
+    })
+}
+
+/// How many failed scans of one Checkpoint the backlog allows before it
+/// stops offering that Checkpoint.
+pub const SCAN_MAX_ATTEMPTS: i64 = 3;
+
+const SCAN_COLUMNS: &str = "checkpoint_id, scanner_version, status, level, blocking, \
+     result_json, attempts, created_at";
+
+fn row_to_scan(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRow> {
+    Ok(ScanRow {
+        checkpoint_id: row.get(0)?,
+        scanner_version: row.get(1)?,
+        status: row.get(2)?,
+        level: row.get(3)?,
+        blocking: row.get(4)?,
+        result_json: row.get(5)?,
+        attempts: row.get(6)?,
+        created_at: parse_time(row.get::<_, String>(7)?),
     })
 }
 

@@ -1,7 +1,7 @@
 // What capture knows about a project — its binding (where it is shared) and
 // what the folder is (origin, root commit) — read once and kept.
 //
-// The thread overview's Session card shows these, and the card's body mounts
+// The Details card's Session section shows these, and the card's body mounts
 // on every expand: reading them per mount painted "Reading project…" for a
 // frame and then jumped to the rows. None of it changes while you collapse a
 // card. So the answer is cached per project and re-read only when something

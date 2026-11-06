@@ -373,16 +373,24 @@ pub fn offer_for(
     provider.map_or_else(SessionMcpOffer::none, |p| p.offer(request))
 }
 
-/// `_meta` for a session request carrying `servers` (only ever the host's
-/// offer, never the user's own servers): the Claude Code adapter
-/// passes `_meta.claudeCode.options` to the Agent SDK, whose `allowedTools` rule
-/// `mcp__<server>` runs that server's tools without a permission prompt: the
-/// standing the native agent's servers have (`default_tools_approval_mode =
-/// approve`). A server with any tool in `ask_first` ([`AskFirst`]) is never
-/// listed, so its tools keep Claude Code's own prompt; an ACP session is not
-/// offered such a server today, and this keeps that true by construction.
-/// Other adapters ignore `claudeCode`. `None` when no server qualifies.
-pub fn preapproval_meta(servers: &[acp::McpServer], ask_first: &AskFirst) -> Option<acp::Meta> {
+/// `_meta` for a session request, read by the Claude Code adapter and ignored
+/// by every other one: it passes `_meta.claudeCode.options` to the Agent SDK.
+///
+/// Two things ride it:
+///
+/// - **Pre-approved servers.** The SDK's `allowedTools` rule `mcp__<server>`
+///   runs that server's tools without a permission prompt: the standing the
+///   native agent's servers have (`default_tools_approval_mode = approve`).
+///   Only `servers` (the host's offer, never the user's own) are listed, and a
+///   server with any tool in `ask_first` ([`AskFirst`]) never is, so its tools
+///   keep Claude Code's own prompt.
+/// - **Thinking summaries.** Current Claude models default thinking `display`
+///   to `"omitted"`: the thinking blocks stream empty, and the transcript's
+///   live thought has nothing to show. `--thinking-display summarized` asks
+///   for the readable summary instead, and lets Claude Code apply it to
+///   whichever thinking mode the model supports (forcing `thinking:
+///   {type: "adaptive"}` here would fail on models that only take a budget).
+pub fn claude_code_meta(servers: &[acp::McpServer], ask_first: &AskFirst) -> acp::Meta {
     let rules: Vec<serde_json::Value> = servers
         .iter()
         .filter_map(|server| match server {
@@ -395,11 +403,15 @@ pub fn preapproval_meta(servers: &[acp::McpServer], ask_first: &AskFirst) -> Opt
             _ => None,
         })
         .collect();
-    if rules.is_empty() {
-        return None;
+    let mut options = serde_json::json!({
+        "extraArgs": { "thinking-display": "summarized" },
+        "settings": { "showThinkingSummaries": true },
+    });
+    if !rules.is_empty() {
+        options["allowedTools"] = rules.into();
     }
-    let meta = serde_json::json!({ "claudeCode": { "options": { "allowedTools": rules } } });
-    meta.as_object().cloned()
+    let meta = serde_json::json!({ "claudeCode": { "options": options } });
+    meta.as_object().cloned().unwrap_or_default()
 }
 
 /// The servers an agent with `capabilities` may be sent: stdio always (ACP
@@ -437,21 +449,33 @@ mod tests {
     fn offered_servers_are_preapproved_for_claude_code() {
         let stdio = acp::McpServer::Stdio(acp::McpServerStdio::new("atlas_code", "/bin/atlas"));
         let servers = [http("atlas_memory"), stdio];
-        let meta = preapproval_meta(&servers, &AskFirst::none()).unwrap();
+        let meta = claude_code_meta(&servers, &AskFirst::none());
         assert_eq!(
-            serde_json::Value::Object(meta),
-            serde_json::json!({
-                "claudeCode": { "options": { "allowedTools": ["mcp__atlas_memory", "mcp__atlas_code"] } }
-            })
+            meta["claudeCode"]["options"]["allowedTools"],
+            serde_json::json!(["mcp__atlas_memory", "mcp__atlas_code"])
         );
-        assert_eq!(preapproval_meta(&[], &AskFirst::none()), None);
+        assert!(
+            claude_code_meta(&[], &AskFirst::none())["claudeCode"]["options"]
+                .get("allowedTools")
+                .is_none()
+        );
         // A server with an outward action keeps Claude Code's own prompt.
         let ask = AskFirst::none().on("atlas_memory", &["share"]);
-        let meta = preapproval_meta(&servers, &ask).unwrap();
+        let meta = claude_code_meta(&servers, &ask);
         assert_eq!(
             meta["claudeCode"]["options"]["allowedTools"],
             serde_json::json!(["mcp__atlas_code"])
         );
+    }
+
+    /// Current models stream empty thinking unless the summary is asked for;
+    /// every session asks, servers or not.
+    #[test]
+    fn every_session_asks_for_thinking_summaries() {
+        let meta = claude_code_meta(&[], &AskFirst::none());
+        let options = &meta["claudeCode"]["options"];
+        assert_eq!(options["extraArgs"]["thinking-display"], "summarized");
+        assert_eq!(options["settings"]["showThinkingSummaries"], true);
     }
 
     /// Every settle call the offer made: one entry each, `None` when the

@@ -23,7 +23,7 @@ describe("applyDisplaySettings", () => {
     expect(root.style.getPropertyValue("--atlas-code-font")).toBe("");
     expect(root.style.getPropertyValue("--atlas-editor-font-size")).toBe("13px");
     expect(root.dataset.chatWidth).toBe("normal");
-    expect(root.dataset.chatCodeWrap).toBe("on");
+    expect(root.dataset.wordWrap).toBe("on");
     expect(root.dataset.diffPalette).toBe("theme");
   });
 
@@ -33,7 +33,7 @@ describe("applyDisplaySettings", () => {
       codeFontFamily: "JetBrains Mono",
       terminalFontSize: 15,
       chatWidth: "full",
-      chatCodeWrap: false,
+      wordWrap: false,
       diffPalette: "blue-orange",
       timeFormat: "24h",
     });
@@ -41,7 +41,7 @@ describe("applyDisplaySettings", () => {
     expect(appliedTerminalFont()).toBe("JetBrains Mono");
     expect(appliedTerminalFontSize()).toBe(15);
     expect(root.dataset.chatWidth).toBe("full");
-    expect(root.dataset.chatCodeWrap).toBe("off");
+    expect(root.dataset.wordWrap).toBe("off");
     expect(root.dataset.diffPalette).toBe("blue-orange");
     expect(timeFormat()).toBe("24h");
 

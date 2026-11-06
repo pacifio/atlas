@@ -12,6 +12,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { Role } from "./roles";
+
 /** No credential stored. */
 export interface SignedOut {
   status: "signed-out";
@@ -47,19 +49,11 @@ export interface AccountUser {
 /**
  * A role in an organisation (API doc §6), highest privilege first.
  *
- * A union rather than `string` so `ROLE_LABELS` cannot silently lose a case:
- * the only thing the desktop does with a role is render its label, and a value
- * with no label renders as nothing at all.
+ * A union rather than `string` so `ROLE_LABELS` (`roles.ts`) cannot silently
+ * lose a case: the only thing the desktop does with a role is render its
+ * label, and a value with no label renders as nothing at all.
  */
-export type Role = "admin" | "product_owner" | "developer" | "member";
-
-/** What each role is called on screen. Matches the web dashboard's wording. */
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Admin",
-  product_owner: "Product Owner",
-  developer: "Developer",
-  member: "Member",
-};
+export type { Role };
 
 /** One organisation the account belongs to (ATL-51). Read-only — see ATL-36. */
 export interface AccountOrg {

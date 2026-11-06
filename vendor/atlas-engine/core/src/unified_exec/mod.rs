@@ -33,7 +33,7 @@ use atlas_engine_protocol::models::AdditionalPermissionProfile;
 use atlas_engine_tools::UnifiedExecShellMode;
 use atlas_engine_utils_output_truncation::TruncationPolicy;
 use atlas_engine_utils_path_uri::PathUri;
-use rand::Rng;
+use rand::RngExt;
 use rand::rng;
 use tokio::sync::Mutex;
 

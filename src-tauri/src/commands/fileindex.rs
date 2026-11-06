@@ -361,6 +361,12 @@ async fn build_project_index(
             let app_for_watch = app_for_task.clone();
             let key_for_watch = key_for_task.clone();
             let window_for_watch = window_for_task.clone();
+            // Resolved once, here: a project opened through a symlink is
+            // reported by FSEvents under its resolved path, and nothing below
+            // (the ignore filter, the index, the tree's `dirs`) would match it.
+            let canonical_for_watch = resolved_alias(&root_for_task);
+            // The gitignore matcher is keyed and queried by canonical path.
+            let ignore_root = std::fs::canonicalize(&root_for_task).ok();
 
             // `NoCache`, not the platform default. On macOS `RecommendedCache` is a
             // `FileIdMap`, which `stat`s every event path to correlate renames — on
@@ -372,16 +378,38 @@ async fn build_project_index(
                 None,
                 move |result: notify_debouncer_full::DebounceEventResult| match result {
                     Ok(events) => {
+                        // Reads first (`fs_events`): the ignore check below
+                        // opens `.gitignore`, which on Linux is an event here.
+                        let mut events = crate::fs_events::changes(events);
+                        if events.is_empty() {
+                            return;
+                        }
+                        // Event paths as the project was opened, not as the OS
+                        // resolved them.
+                        if let Some(canonical) = &canonical_for_watch {
+                            for e in &mut events {
+                                for p in &mut e.event.paths {
+                                    under_given_root(p, &root_for_watch, canonical);
+                                }
+                            }
+                        }
                         // Drop anything under a directory we never index BEFORE any
                         // work happens. Without this a single `npm install` or
                         // `cargo build` turns into a sustained event storm.
+                        // Gitignored paths too: a test hook writing `coverage/`
+                        // reached here as the root watch's "directory modified",
+                        // and every listener re-read the whole repository.
                         let events: Vec<_> = events
                             .into_iter()
                             .filter(|e| {
-                                !e.event
-                                    .paths
-                                    .iter()
-                                    .all(|p| is_ignored_event_path(&root_for_watch, p))
+                                !e.event.paths.iter().all(|p| {
+                                    is_ignored_event_path(&root_for_watch, p)
+                                        || is_gitignored_event_path(
+                                            &root_for_watch,
+                                            ignore_root.as_deref(),
+                                            p,
+                                        )
+                                })
                             })
                             .collect();
                         if events.is_empty() {
@@ -394,7 +422,28 @@ async fn build_project_index(
                         // directories instead of re-walking the whole
                         // project — agent file writes are tiny bursts,
                         // typically one parent dir per debounce.
-                        let (dirs_touched, full_refresh) = summarise_events(&events);
+                        let (dirs_touched, mut full_refresh) = summarise_events(&events);
+
+                        // A `.gitignore` edit changes which entries
+                        // `read_directories` flags as ignored, anywhere below
+                        // it: drop the cached matcher, and have the explorer
+                        // re-read what it has loaded rather than one folder.
+                        let gitignore_changed = events.iter().any(|e| {
+                            e.event
+                                .paths
+                                .iter()
+                                .any(|p| super::fs_entries::is_gitignore(p))
+                        });
+                        if gitignore_changed || full_refresh {
+                            super::fs_entries::invalidate(
+                                &root_for_watch,
+                                events
+                                    .iter()
+                                    .flat_map(|e| e.event.paths.iter().map(PathBuf::as_path)),
+                                full_refresh,
+                            );
+                        }
+                        full_refresh |= gitignore_changed;
 
                         apply_events(&root_for_watch, &files_for_watch, &gen_for_watch, events);
                         // Files just changed — drop the derived folder
@@ -651,7 +700,10 @@ fn score_rel(
 ///
 /// Nested ignored directories (`packages/*/node_modules`) still fall inside a
 /// watched subtree; [`is_ignored_event_path`] drops their events on arrival.
-fn watch_roots(root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
+/// The directories to watch under one root, and how deep each watch goes.
+type WatchPlan = Vec<(PathBuf, RecursiveMode)>;
+
+fn watch_roots(root: &Path) -> WatchPlan {
     match plan_watches(root, 0) {
         // Nothing ignored anywhere in reach — one recursive watch is optimal.
         None => vec![(root.to_path_buf(), RecursiveMode::Recursive)],
@@ -682,7 +734,7 @@ const MAX_WATCHES: usize = 256;
 /// if anything below it does. Deciding on the immediate level alone was not
 /// enough — in this very repo `target/` sits at `src-tauri/target`, so the
 /// project root looks perfectly clean while 265k files hide two levels down.
-fn plan_watches(dir: &Path, depth: usize) -> Option<Vec<(PathBuf, RecursiveMode)>> {
+fn plan_watches(dir: &Path, depth: usize) -> Option<WatchPlan> {
     if depth >= MAX_SPLIT_DEPTH {
         // Stop splitting; report clean so the caller takes one recursive watch.
         // `is_ignored_event_path` absorbs whatever noise remains below.
@@ -725,7 +777,7 @@ fn plan_watches(dir: &Path, depth: usize) -> Option<Vec<(PathBuf, RecursiveMode)
         .unwrap_or(kept.len());
     let pruned_here = on_disk != kept.len();
 
-    let child_plans: Vec<(PathBuf, Option<Vec<(PathBuf, RecursiveMode)>>)> = kept
+    let child_plans: Vec<(PathBuf, Option<WatchPlan>)> = kept
         .into_iter()
         .map(|c| {
             let plan = plan_watches(&c, depth + 1);
@@ -767,6 +819,57 @@ const NOISY_DIRS: [&str; 12] = [
 ];
 
 /// True when an event path lies inside a directory we never index.
+/// `root` resolved through any symlinks, when that differs from `root`. The
+/// project keeps the path it was opened with; this is the one the OS may
+/// report events under (macOS FSEvents always answers with resolved paths).
+fn resolved_alias(root: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(root).ok().filter(|c| c != root)
+}
+
+/// Re-root `path` from `resolved` (see [`resolved_alias`]) onto `root`, the
+/// path the project was opened with. Paths not under `resolved` are left as
+/// they are.
+fn under_given_root(path: &mut PathBuf, root: &Path, resolved: &Path) {
+    let Ok(rest) = path.strip_prefix(resolved) else {
+        return;
+    };
+    *path = if rest.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rest)
+    };
+}
+
+/// Whether `path` (as the watcher reports it, under `root`) is gitignored, by
+/// the same matchers the explorer flags ignored entries with. `canonical` is
+/// `root` canonicalized, the form those matchers are keyed and queried by.
+fn is_gitignored_event_path(root: &Path, canonical: Option<&Path>, path: &Path) -> bool {
+    let (Some(canonical), Ok(rel)) = (canonical, path.strip_prefix(root)) else {
+        return false;
+    };
+    if rel.as_os_str().is_empty() {
+        return false;
+    }
+    let Some(ignores) = super::fs_entries::repo_ignores(canonical) else {
+        return false;
+    };
+    let abs = canonical.join(rel);
+    abs.parent().is_some_and(|d| ignores.dir_is_ignored(d))
+        || ignores.is_ignored(&abs, abs.is_dir())
+}
+
+/// A content or metadata edit, which changes no file set. notify's Windows
+/// backend reports every plain write as `Modify(Any)` (renames arrive as
+/// `Modify(Name(_))`), so there `Any` is an edit too; treating it as opaque
+/// made every saved file a full refresh and re-walk of the project.
+fn is_content_edit(kind: EventKind) -> bool {
+    match kind {
+        EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => true,
+        EventKind::Modify(ModifyKind::Any) => cfg!(windows),
+        _ => false,
+    }
+}
+
 fn is_ignored_event_path(root: &Path, path: &Path) -> bool {
     let Ok(rel) = path.strip_prefix(root) else {
         return false;
@@ -831,7 +934,7 @@ fn summarise_events(events: &[DebouncedEvent]) -> (std::collections::HashSet<Pat
             // Same reasoning as `apply_events`: an edit to a file's contents
             // changes nothing about the tree the explorer draws, so it must not
             // force it to re-walk everything it has open.
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {}
+            kind if is_content_edit(kind) => {}
             EventKind::Modify(_) => {
                 full_refresh = true;
             }
@@ -877,7 +980,7 @@ fn apply_events(
             // saved file — and every one of the thousands a build writes —
             // triggered a full `walk_project`, up to once per 150ms debounce
             // window, forever. That was the second half of the CPU burn.
-            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {}
+            kind if is_content_edit(kind) => {}
             EventKind::Modify(_) => {
                 // Rename or move shows up here; the cheapest correct fix is
                 // a full re-walk of the project. notify-full's rename events
@@ -946,6 +1049,79 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// A test hook writing `coverage/` must not wake the explorer or git: on
+    /// Windows the root's watch reported the directory itself as modified.
+    #[test]
+    fn gitignored_event_paths_are_dropped() {
+        let t = TmpDir::new();
+        t.dir(".git");
+        t.file(".gitignore", "coverage/\n*.log\n");
+        t.file("coverage/lcov.info", "");
+        t.file("src/a.js", "");
+        let root = t.path();
+        let canonical = std::fs::canonicalize(root).unwrap();
+        let ignored = |rel: &str| is_gitignored_event_path(root, Some(&canonical), &root.join(rel));
+        assert!(ignored("coverage"));
+        assert!(ignored("coverage/lcov.info"));
+        assert!(ignored("coverage/deleted-already.tmp"));
+        assert!(ignored("src/debug.log"));
+        assert!(!ignored("src/a.js"));
+        assert!(!ignored(".gitignore"));
+        assert!(!ignored(""));
+    }
+
+    #[test]
+    fn content_edits_include_windows_plain_writes() {
+        use notify::event::{DataChange, RenameMode};
+        assert!(is_content_edit(EventKind::Modify(ModifyKind::Data(
+            DataChange::Content
+        ))));
+        assert_eq!(
+            is_content_edit(EventKind::Modify(ModifyKind::Any)),
+            cfg!(windows)
+        );
+        assert!(!is_content_edit(EventKind::Modify(ModifyKind::Name(
+            RenameMode::Any
+        ))));
+        assert!(!is_content_edit(EventKind::Create(
+            notify::event::CreateKind::File
+        )));
+    }
+
+    /// A project opened through a symlink: FSEvents reports the resolved path,
+    /// and the tree only matches paths under the root it was given.
+    #[cfg(unix)]
+    #[test]
+    fn events_under_a_symlinked_root_come_back_under_the_given_root() {
+        let t = TmpDir::new();
+        t.dir("real/src");
+        let link = t.path().join("link");
+        std::os::unix::fs::symlink(t.path().join("real"), &link).unwrap();
+
+        let resolved = resolved_alias(&link).expect("a symlinked root resolves elsewhere");
+        assert_eq!(
+            resolved,
+            std::fs::canonicalize(t.path().join("real")).unwrap()
+        );
+        assert_eq!(
+            resolved_alias(&resolved),
+            None,
+            "a resolved root is its own"
+        );
+
+        let mut inside = resolved.join("src/a.ts");
+        under_given_root(&mut inside, &link, &resolved);
+        assert_eq!(inside, link.join("src/a.ts"));
+
+        let mut at_root = resolved.clone();
+        under_given_root(&mut at_root, &link, &resolved);
+        assert_eq!(at_root, link);
+
+        let mut outside = PathBuf::from("/elsewhere/b.ts");
+        under_given_root(&mut outside, &link, &resolved);
+        assert_eq!(outside, PathBuf::from("/elsewhere/b.ts"));
     }
 
     /// The regression this whole change exists for: the watcher used to take one

@@ -1,7 +1,10 @@
 import type { CSSProperties } from "react";
-import type { Theme, ThemeAppearance } from "./lib/theme-api";
-import { resolveTheme } from "./resolve-theme";
-import type { Appearance } from "./theme-key-registry";
+import {
+  type Theme,
+  type ThemeAppearance,
+  resolveTheme,
+  type Appearance,
+} from "@tryatlas/design/theme";
 
 /**
  * A theme resolved for a PREVIEW rather than for the app.
@@ -9,7 +12,7 @@ import type { Appearance } from "./theme-key-registry";
  * `resolveTheme` is pure — it returns a variable map and touches no DOM — so a
  * theme can be shown without being applied: hand `vars` to one element's
  * `style` and every custom property in it inherits down that subtree only.
- * Markup inside resolves `var(--background)` and `var(--atlas-syntax-keyword)`
+ * Markup inside resolves `var(--background)` and `var(--syntax-keyword)`
  * against THAT theme while the rest of the app stays on the active one. No
  * global write, no flicker, no "apply it and change back".
  *

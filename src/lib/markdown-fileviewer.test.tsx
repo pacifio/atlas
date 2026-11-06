@@ -71,3 +71,42 @@ describe("markdown preview images", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 });
+
+describe("markdown preview raw HTML", () => {
+  it("drops the tags and attributes a hostile README could take over the window with", () => {
+    const md = [
+      '<meta http-equiv="refresh" content="0;url=https://evil.example">',
+      "",
+      "<style>body { display: none }</style>",
+      "",
+      '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
+      "",
+      '<div style="position:fixed;inset:0;z-index:99999">overlay</div>',
+      "",
+      '<link rel="stylesheet" href="https://evil.example/x.css"><base href="https://evil.example/">',
+      "",
+      '<form action="https://evil.example"><input name="q"></form>',
+      "",
+      '<object data="x.swf"></object><embed src="x.swf">',
+      "",
+      "<details><summary>More</summary>kept</details>",
+    ].join("\n");
+    const { container } = render(
+      <MarkdownFile trusted docPath={DOC}>
+        {md}
+      </MarkdownFile>,
+    );
+
+    for (const tag of ["meta", "style", "iframe", "link", "base", "form", "object", "embed"]) {
+      expect(container.querySelector(tag), tag).toBeNull();
+    }
+    // React 19 hoists <meta>/<link>/<style> into <head>; none may get there.
+    expect(document.head.querySelector("meta[http-equiv]")).toBeNull();
+    expect(document.head.querySelector('link[href*="evil"], base, style')).toBeNull();
+    expect(container.querySelector("[style]")).toBeNull();
+    // The overlay's text survives as an ordinary, unstyled block.
+    expect(container.textContent).toContain("overlay");
+    // GitHub's harmless raw HTML still renders.
+    expect(container.querySelector("details summary")?.textContent).toBe("More");
+  });
+});

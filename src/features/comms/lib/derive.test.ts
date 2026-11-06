@@ -2,12 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateReactions,
   conversationTitle,
+  firstUnreadId,
+  formatBytes,
+  formatDuration,
   groupMessages,
+  hasUnreadConversation,
   initials,
   isNewDay,
   memberName,
+  peerTone,
+  presenceLabel,
+  typingLabel,
   utf8Bytes,
 } from "./derive";
+import { HUES } from "@tryatlas/design";
 import { parseMentions } from "../types";
 import type { ChatConversation, ChatReaction, CommsMessage, OrgMemberProfile } from "../types";
 
@@ -139,6 +147,52 @@ describe("groupMessages", () => {
   it("marks own groups from the author id", () => {
     expect(groupMessages([msg({ id: "m1", author_id: "u_a" })], "u_a")[0].own).toBe(true);
     expect(groupMessages([msg({ id: "m1", author_id: "u_a" })], "u_b")[0].own).toBe(false);
+  });
+
+  it("starts a new stack at breakBefore, so the unread rule falls between groups", () => {
+    const run = [
+      msg({ id: "m1", created_at: 1788170400000 }),
+      msg({ id: "m2", created_at: 1788170460000 }),
+      msg({ id: "m3", created_at: 1788170520000 }),
+    ];
+    expect(groupMessages(run, "u_b")).toHaveLength(1);
+    const split = groupMessages(run, "u_b", "m2");
+    expect(split.map((g) => g.key)).toEqual(["m1", "m2"]);
+    expect(split[1].messages.map((m) => m.id)).toEqual(["m2", "m3"]);
+  });
+});
+
+describe("presenceLabel", () => {
+  it("says who is here by first name", () => {
+    expect(presenceLabel([])).toBe("");
+    expect(presenceLabel(["Priya Shah"])).toBe("Priya is here");
+    expect(presenceLabel(["Priya Shah", "Tobi Ade"])).toBe("Priya and Tobi");
+    expect(presenceLabel(["Priya", "Tobi", "Mira", "Sam", "Ada"])).toBe("Priya and 4 others");
+  });
+});
+
+describe("firstUnreadId", () => {
+  const run = [
+    msg({ id: "m1", seq: 1, author_id: "u_b" }),
+    msg({ id: "m2", seq: 2, author_id: "u_a" }),
+    msg({ id: "m3", seq: 3, author_id: "u_b", deleted: true }),
+    msg({ id: "m4", seq: 4, author_id: "u_b" }),
+  ];
+
+  it("is null without a read position", () => {
+    expect(firstUnreadId(run, null, "u_a")).toBeNull();
+  });
+
+  it("skips my own messages and deleted ones", () => {
+    expect(firstUnreadId(run, 1, "u_a")).toBe("m4");
+  });
+
+  it("can be the first loaded message", () => {
+    expect(firstUnreadId(run, 0, "u_a")).toBe("m1");
+  });
+
+  it("is null when everything after the read position is mine", () => {
+    expect(firstUnreadId(run, 4, "u_a")).toBeNull();
   });
 });
 
@@ -272,5 +326,71 @@ describe("initials", () => {
   });
   it("is ? only when there is nothing to draw", () => {
     expect(initials("  ")).toBe("?");
+  });
+});
+
+describe("hasUnreadConversation", () => {
+  const conv = (id: string) => ({ id }) as ChatConversation;
+  const read = (conv_id: string, unread: number, mentions = 0) => ({
+    conv_id,
+    last_read_seq: 0,
+    unread,
+    mentions,
+  });
+
+  it("is true while a listed conversation has an unread message or mention", () => {
+    expect(hasUnreadConversation([read("a", 0), read("b", 3)], [conv("a"), conv("b")])).toBe(true);
+    expect(hasUnreadConversation([read("a", 0, 1)], [conv("a")])).toBe(true);
+  });
+
+  it("is false when everything is read, or the unread one is no longer listed", () => {
+    expect(hasUnreadConversation([read("a", 0)], [conv("a")])).toBe(false);
+    expect(hasUnreadConversation([read("gone", 5)], [conv("a")])).toBe(false);
+    expect(hasUnreadConversation([], [])).toBe(false);
+  });
+});
+
+describe("formatDuration", () => {
+  const at = (seconds: number) => formatDuration(0, seconds * 1000);
+  it("counts seconds below a minute and whole minutes, then hours, above", () => {
+    expect(at(0)).toBe("0 sec");
+    expect(at(59)).toBe("59 sec");
+    expect(at(60)).toBe("1 min");
+    expect(at(59 * 60)).toBe("59 min");
+    expect(at(60 * 60)).toBe("1 hr");
+    expect(at(61 * 60)).toBe("1 hr 1 min");
+    expect(at(125 * 60)).toBe("2 hr 5 min");
+  });
+});
+
+describe("formatBytes", () => {
+  it("steps from bytes to whole kilobytes to one-decimal megabytes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+    expect(formatBytes(1024)).toBe("1 KB");
+    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
+    expect(formatBytes(1.5 * 1024 * 1024)).toBe("1.5 MB");
+  });
+});
+
+describe("peerTone", () => {
+  it("gives one person the same identity hue every time", () => {
+    expect(peerTone("usr_priya")).toBe(peerTone("usr_priya"));
+  });
+
+  it("is always one of the identity hues, never the no-identity grey", () => {
+    for (const id of ["usr_priya", "usr_tobi", "usr_mira", "usr_sam", "usr_dev", ""]) {
+      const tone = peerTone(id);
+      expect(HUES).toContain(tone);
+      expect(tone).not.toBe("grey");
+    }
+  });
+});
+
+describe("typingLabel", () => {
+  it("names one or two typers and counts three or more", () => {
+    expect(typingLabel(["Ada"])).toBe("Ada is typing");
+    expect(typingLabel(["Ada", "Bob"])).toBe("Ada and Bob are typing");
+    expect(typingLabel(["Ada", "Bob", "Cy"])).toBe("3 people are typing");
   });
 });

@@ -6,9 +6,9 @@
 
 ## Context
 
-- Settings → Agents follows T3 Code's provider editor, which gives each provider named fields: Claude's `CLAUDE_CONFIG_DIR path` and `Auto-compact after`, Codex's `CODEX_HOME path`, and so on. Atlas could only offer an agent a command, launch arguments and a list of environment variables, which leaves every user to find the right variable names in each agent's docs.
+- A good agent settings editor gives each agent named fields: Claude's `CLAUDE_CONFIG_DIR path` and `Auto-compact after`, Codex's `CODEX_HOME path`, and so on. Atlas could only offer an agent a command, launch arguments and a list of environment variables, which leaves every user to find the right variable names in each agent's docs.
 - The ACP adapters for Claude and Codex ignore extra launch arguments: `claude-agent-acp` reads only `--cli` and `--version`, and `codex-acp` only `--version`, `login` and `cli`. Both pass their whole environment through to the agent, so documented environment variables are the one way to configure them.
-- T3 keeps a provider's API key per instance, stored apart from its settings. Atlas kept every key in the user's shell profile (Provider keys), so a key meant for one agent applied to all of them.
+- A key belongs to one agent instance and is best stored apart from its settings. Atlas kept every key in the user's shell profile (Provider keys), so a key meant for one agent applied to all of them.
 
 ## Decision
 

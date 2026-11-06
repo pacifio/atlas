@@ -32,8 +32,10 @@ import type {
   ToolTally,
   BoardPage,
   ProjectFilter,
+  TracePage,
 } from "@/features/artifacts/types";
 import type { Comment, CommentThreads } from "@/features/artifacts/lib/comments-api";
+import type { SessionStreamChunk } from "@/features/artifacts/lib/read-session-detail";
 import type { ArtifactShare } from "@/features/artifacts/lib/shares-api";
 import type { CommentTarget } from "@/features/chat/components/chat-comments-controller";
 import type {
@@ -715,7 +717,16 @@ function standardTimeline(seed: Seed, index: number): TimelineEntry[] {
       kind: "response",
       at: t(6),
       turnSeq: 1,
-      text: `Done in \`${file}\`. Want me to take the same pass through the tests?`,
+      // A fence, so the response shows a code block's language and Copy corner.
+      text: [
+        `Done in \`${file}\`. The change at its heart:`,
+        "",
+        "```ts",
+        "export const ring = (focused: boolean) => (focused ? 2 : 0);",
+        "```",
+        "",
+        "Want me to take the same pass through the tests?",
+      ].join("\n"),
     }),
   ];
   // No branch means no repository — `docs` is a plain folder in the git
@@ -972,6 +983,28 @@ const threads = new Map<string, SessionChatThreadWire[]>([
               },
             ],
           },
+          {
+            id: "msg-3",
+            role: "user",
+            content: "Draw the call path",
+            timestamp: at(0, 10, 8),
+          },
+          {
+            id: "msg-4",
+            role: "assistant",
+            content: [
+              "The board command reaches the reader through two hops:",
+              "",
+              "```mermaid",
+              "flowchart TD",
+              "  A[artifacts_board] --> B[open_reader]",
+              "  B --> C{reader found?}",
+              "  C -->|yes| D[read_sessions]",
+              "  C -->|no| E[early return]",
+              "```",
+            ].join("\n"),
+            timestamp: at(0, 10, 9),
+          },
         ],
       },
       {
@@ -1102,6 +1135,7 @@ export interface ArtifactsResponses {
   chat_comment_target: CommentTarget | null;
   artifacts_cloud_refresh: boolean;
   artifacts_cloud_session: SessionDetail;
+  artifacts_cloud_session_stream: Unit;
   artifacts_cloud_payload: ArtifactPayload;
   artifacts_cloud_session_url: string | null;
   artifacts_cloud_session_share: ArtifactShare | null;
@@ -1114,6 +1148,7 @@ export interface ArtifactsResponses {
   artifacts_cloud_comment_delete: Comment;
   artifacts_cloud_comment_vote: Comment;
   artifacts_checkpoints: BoardCheckpoint[];
+  artifacts_trace: TracePage;
   artifacts_payload: ArtifactPayload;
   session_chat_threads_list: ThreadMeta[];
   session_chat_thread_get: SessionChatThreadWire;
@@ -1327,6 +1362,29 @@ function threadsFor(sessionId: string): CommentThreads {
   return { byAnchor, session };
 }
 
+/**
+ * Answer `artifacts_cloud_session_stream` the way Rust does when nothing is on
+ * disk: one `page` chunk per `pageSize` entries, `delayMs` apart — the server's
+ * per-page wait, scaled down — the last marked `done`.
+ */
+export async function streamDetail(
+  detail: SessionDetail,
+  channel: unknown,
+  { pageSize = 500, delayMs = 250 }: { pageSize?: number; delayMs?: number } = {},
+): Promise<null> {
+  const send = (channel as { onmessage: (chunk: SessionStreamChunk) => void }).onmessage;
+  const pages = Math.max(1, Math.ceil(detail.entries.length / pageSize));
+  for (let i = 0; i < pages; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    send({
+      kind: "page",
+      detail: { ...detail, entries: detail.entries.slice(i * pageSize, (i + 1) * pageSize) },
+      done: i === pages - 1,
+    });
+  }
+  return null;
+}
+
 export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
   // Targeting is a Rust-side concern with nothing to answer — except that the
   // real board sockets each hear their Project's roster on connect, which is
@@ -1384,6 +1442,12 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
       })),
     };
   },
+
+  artifacts_cloud_session_stream: ({ projectId, sessionId, onChunk }) =>
+    streamDetail(
+      artifactsHandlers.artifacts_cloud_session({ projectId, sessionId }) as SessionDetail,
+      onChunk,
+    ),
 
   artifacts_cloud_session_url: ({ projectId, sessionId }): string =>
     `https://app.tryatlas.cc/timeline?org=org_demo&workspace=${String(projectId)}&session=${String(sessionId)}`,
@@ -1521,6 +1585,69 @@ export const artifactsHandlers: TypedHandlers<ArtifactsResponses> = {
   },
   artifacts_checkpoints: ({ projects }): BoardCheckpoint[] =>
     checkpoints(Array.isArray(projects) ? (projects as string[]) : []),
+  // The local half only, as the command answers with no server reachable:
+  // this machine's Sessions active in the window, with git's subjects. The
+  // `timeline-trace` scenario answers with the server's half.
+  artifacts_trace: ({ projects, filter, from, to, cursor }): TracePage => {
+    const scope = (filter ?? null) as ProjectFilter | null;
+    const paths = !scope
+      ? Array.isArray(projects)
+        ? (projects as string[])
+        : []
+      : "local" in scope
+        ? [scope.local]
+        : [];
+    const lo = Date.parse(String(from));
+    const hi = Date.parse(String(to));
+    const sessions = cursor
+      ? []
+      : SEEDS.filter((seed) => paths.includes(seed.project.path))
+          .map((seed) => ({ seed, summary: summaryOf(seed) }))
+          .filter(
+            ({ summary }) =>
+              Date.parse(summary.startedAt) <= hi && Date.parse(summary.lastActivityAt) >= lo,
+          )
+          .map(({ seed, summary }) => ({
+            id: seed.id,
+            number: null,
+            workspaceId: SYNCED_PROJECTS.get(seed.project.path) ?? "",
+            workspaceSlug: null,
+            authorId: null,
+            participants: [],
+            title: summary.title,
+            agent: summary.agent,
+            source: summary.source,
+            startedAt: summary.startedAt,
+            lastActivityAt: summary.lastActivityAt,
+            live: seed.id === LIVE_ID,
+            incomplete: false,
+            checkpointsTruncated: false,
+            projectPath: seed.project.path,
+            checkpoints: (TIMELINES.get(seed.id) ?? [])
+              .filter((e) => e.kind === "checkpoint" && e.commitSha)
+              .map((e) => ({
+                id: e.id,
+                sessionId: seed.id,
+                at: e.at,
+                authorId: null,
+                commitSha: e.commitSha!,
+                branch: e.branch,
+                linkState: e.linkState ?? "linked",
+                insertions: e.insertions,
+                deletions: e.deletions,
+                files: e.files.length,
+                commitSubject: e.commitSubject,
+              })),
+          }));
+    return {
+      from: String(from),
+      to: String(to),
+      sessions,
+      workspaces: [],
+      nextCursor: null,
+      notes: [],
+    };
+  },
   artifacts_payload: ({ blobRef }): ArtifactPayload => {
     const blob = BLOBS.get(String(blobRef));
     // A vacuumed blob store is a real state; Rust surfaces it as a read error.

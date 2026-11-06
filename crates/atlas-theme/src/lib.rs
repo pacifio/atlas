@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use schemars::{schema_for, JsonSchema};
+use schemars::{generate::SchemaSettings, transform::RecursiveTransform, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -95,7 +95,7 @@ pub const BASE_TOKENS: &[&str] = &[
 
 /// shadcn's three font stacks. Like every base token they are optional, but
 /// unlike the rest they have no `[[base]]` rule: one a theme leaves out is
-/// Atlas's own default from `tokens.css`. A tweakcn import keeps them. Either
+/// Atlas's own default from `@tryatlas/design`'s `tokens.css`. A tweakcn import keeps them. Either
 /// way a user's font setting outranks them, so they only decide the fonts of
 /// someone who left that setting on "follow the theme".
 pub const FONT_TOKENS: &[&str] = &["font-sans", "font-serif", "font-mono"];
@@ -556,13 +556,19 @@ pub fn load_user_themes_from(dir: &Path) -> Result<(Vec<Theme>, Vec<ThemeWarning
 }
 
 pub fn all_themes() -> Result<ThemeCatalog, ThemeError> {
+    all_themes_from(user_theme_dir().as_deref())
+}
+
+/// [`all_themes`] over a given user-theme directory, so a test can assemble
+/// the real catalog without touching `~/.config`.
+fn all_themes_from(user_dir: Option<&Path>) -> Result<ThemeCatalog, ThemeError> {
     let mut by_id = built_in_themes()?
         .into_iter()
         .map(|theme| (theme.id.clone(), (theme, true)))
         .collect::<BTreeMap<_, _>>();
     let mut warnings = Vec::new();
-    if let Some(dir) = user_theme_dir() {
-        let (themes, failures) = load_user_themes_from(&dir)?;
+    if let Some(dir) = user_dir {
+        let (themes, failures) = load_user_themes_from(dir)?;
         for theme in themes {
             by_id.insert(theme.id.clone(), (theme, false));
         }
@@ -659,6 +665,39 @@ fn debounce(rx: &mpsc::Receiver<()>, window: Duration, mut on_change: impl FnMut
     }
 }
 
+/// Puts back three details of how schemars 0.8 wrote the schema, so that moving to
+/// schemars 1 leaves `schema/theme-v1.json` as editors already know it: a doc
+/// comment becomes one line per paragraph (1.x keeps the author's wrapping),
+/// `required` is sorted (1.x keeps field order), and `minimum` is a float.
+fn keep_schemars_0_8_shapes(schema: &mut Schema) {
+    use serde_json::Value;
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    if let Some(Value::String(text)) = object.get_mut("description") {
+        *text = text
+            .trim()
+            .split("\n\n")
+            .map(|paragraph| {
+                paragraph
+                    .lines()
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+    }
+    if let Some(Value::Array(required)) = object.get_mut("required") {
+        required.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+    }
+    if let Some(value) = object.get_mut("minimum") {
+        if let Some(number) = value.as_f64().and_then(serde_json::Number::from_f64) {
+            *value = Value::Number(number);
+        }
+    }
+}
+
 /// The schema authors get through the `#:schema` comment at the top of a theme.
 ///
 /// `schemars` describes the struct, which types `keys` as an open map of
@@ -671,8 +710,16 @@ fn debounce(rx: &mpsc::Receiver<()>, window: Duration, mut on_change: impl FnMut
 /// unknown key as a warning for forward compatibility. That is deliberate — the
 /// editor should flag a key this build has never heard of.
 pub fn json_schema() -> serde_json::Value {
-    let mut schema =
-        serde_json::to_value(schema_for!(Theme)).expect("Theme JSON schema serializes");
+    // Draft-07 with `definitions`, which the loader below and the theme-key
+    // generator both address by path; `schema_for!` is 2020-12 (`$defs`) since
+    // schemars 1.
+    let mut schema = serde_json::to_value(
+        SchemaSettings::draft07()
+            .with_transform(RecursiveTransform(keep_schemars_0_8_shapes))
+            .into_generator()
+            .into_root_schema_for::<Theme>(),
+    )
+    .expect("Theme JSON schema serializes");
     let keys = schema
         .pointer_mut("/definitions/ThemeVariant/properties/keys")
         .and_then(serde_json::Value::as_object_mut)
@@ -1246,6 +1293,47 @@ mod tests {
         assert_eq!(warnings[0].key, "0-broken.toml");
         assert_eq!(warnings[1].key, "1-not-toml.toml");
         assert!(warnings.iter().all(|warning| !warning.message.is_empty()));
+    }
+
+    /// Atlas reads one theme schema and translates nothing older. A theme in
+    /// an old shape, or one naming another schema, fails to load like any other
+    /// bad file: it is reported by name and never enters the assembled
+    /// catalog, which still holds the default. An id that does not resolve
+    /// falls back to that default: `fallback_unknown_theme` in
+    /// `atlas_config.rs` (tested by
+    /// `unknown_config_theme_falls_back_in_memory_and_is_never_rewritten`)
+    /// and `apply` in the theme store.
+    #[test]
+    fn an_old_or_other_schema_user_theme_is_skipped_and_the_default_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("old.toml"),
+            "id = \"old\"\nname = \"Old\"\n[colors]\n\"--atlas-element-hover\" = \"#123456\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("next.toml"),
+            minimal_theme("").replace("schema = 1", "schema = 2"),
+        )
+        .unwrap();
+
+        let catalog = all_themes_from(Some(dir.path())).unwrap();
+        let ids = catalog
+            .themes
+            .iter()
+            .map(|(theme, _)| theme.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!ids.contains(&"old") && !ids.contains(&"next"), "{ids:?}");
+        assert!(ids.contains(&DEFAULT_THEME_ID), "{ids:?}");
+        let warnings = catalog.warnings;
+        let keys = warnings.iter().map(|w| w.key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["next.toml", "old.toml"]);
+        assert!(
+            warnings[0].message.contains("unsupported schema 2"),
+            "{warnings:?}"
+        );
+        assert!(warnings[1].message.contains("old.toml"), "{warnings:?}");
     }
 
     // ── config_root (must track `config_root` in `atlas_config.rs`; #64 follow-up) ──

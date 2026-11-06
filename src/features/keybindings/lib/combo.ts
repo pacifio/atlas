@@ -281,16 +281,3 @@ function displayKey(c: Combo): string {
 export function displayLabel(c: Combo): string {
   return displayKeys(c).join(isWindows || isLinux ? "+" : "");
 }
-
-/** Split a legacy glyph string ("⌘⇧F", "⌥Space") into keycaps: every modifier
- *  glyph is its own cap, the remainder is one cap. */
-export function splitGlyphCombo(combo: string): string[] {
-  const keys: string[] = [];
-  let rest = combo;
-  while (rest.length > 0 && "⌃⌥⇧⌘".includes(rest[0]!)) {
-    keys.push(rest[0]!);
-    rest = rest.slice(1);
-  }
-  if (rest) keys.push(rest);
-  return keys;
-}

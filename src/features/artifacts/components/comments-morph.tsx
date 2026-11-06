@@ -13,7 +13,7 @@
  * nobody is asking any more.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { CornerDownRight, MessageSquareMore, Search, X } from "lucide-react";
 import { CommenterAvatar, GuestChip, commenterName } from "@/components/commenter-avatar";
 import { cn } from "@/lib/utils";
@@ -41,13 +41,21 @@ function anchorLabel(anchorKind: string, anchorId: string, byId: Map<string, Tim
   return e.kind === "prompt" ? "Prompt" : e.kind === "thinking" ? "Thinking" : "Response";
 }
 
-export function CommentsMorph({
+/**
+ * Memoised: it renders every thread in the Session even while closed (the
+ * panel has to exist to morph open), and the reader re-renders its footer on
+ * every scroll that moves the bottom fade, every Ask toggle and every jump. The
+ * props are stable between those — the reader passes a stable `onJump` — so
+ * the list is rebuilt only when the comments or the Session change.
+ */
+export const CommentsMorph = memo(function CommentsMorph({
   detail,
   comments,
   onJump,
   open: openProp,
   onOpenChange,
   anchorY = "bottom",
+  inPill = false,
 }: {
   detail: Detail;
   comments: RowComments;
@@ -60,8 +68,20 @@ export function CommentsMorph({
   /** Which edge the closed button sits on and the panel grows away from.
    *  "bottom" (default) grows up out of a footer; "top" grows down. */
   anchorY?: "top" | "bottom";
+  /** Closed, it is a button in the reader's footer pill (`footer-pill.tsx`),
+   *  at the pill's right end. */
+  inPill?: boolean;
 }) {
   const [open, setOpen] = useControllableOpen(openProp, onOpenChange);
+  /**
+   * Whether the list has ever been asked for. Until then it is not built: every
+   * Session that opens with comments would otherwise render every thread (an
+   * avatar, a name, a time and a label each) into a panel nobody has opened,
+   * on the click that opened the Session. Once built it stays, so closing and
+   * reopening does not rebuild it.
+   */
+  const [armed, setArmed] = useState(open);
+  if (open && !armed) setArmed(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const root = useRef<HTMLDivElement>(null);
@@ -75,6 +95,7 @@ export function CommentsMorph({
 
   /** Every root comment on the Session, with its replies. */
   const threads = useMemo(() => {
+    if (!armed) return [];
     const all = [
       ...comments.session.map((c) => ({ c, anchorKind: "session", anchorId: detail.summary.id })),
       ...Object.entries(comments.byAnchor).flatMap(([anchorId, list]) =>
@@ -101,7 +122,7 @@ export function CommentsMorph({
         );
       })
       .sort((a, b) => Date.parse(b.c.createdAt) - Date.parse(a.c.createdAt));
-  }, [comments, detail.summary.id, filter, query, directory]);
+  }, [armed, comments, detail.summary.id, filter, query, directory]);
 
   // Every live comment on the Session: the session-level thread plus each
   // anchor's. `visibleCount` counts one bucket, so this sums them.
@@ -130,13 +151,28 @@ export function CommentsMorph({
   }, [open]);
 
   return (
-    <div ref={root} className="relative z-10">
+    <div
+      ref={root}
+      className={cn(
+        "relative z-10",
+        inPill && "size-7 shrink-0 [--morph-closed:1.75rem] [--morph-r-closed:0.875rem]",
+      )}
+    >
       <div
         data-open={open}
         data-anchor-y={anchorY}
         className={cn(
           "t-morph border border-[var(--border)] bg-[var(--popover)]/85 shadow-md backdrop-blur-xl",
           "data-[open=true]:shadow-lg",
+          // In a footer pill (`footer-pill.tsx`) the closed box IS one of the
+          // pill's buttons: the pill's size, no chrome of its own, the pill's
+          // hover. It takes the panel's chrome as it opens, and sits absolute
+          // in its slot so growing covers the pill rather than pushing it —
+          // `!` because `.t-morph`'s own `position: relative` is unlayered
+          // CSS (globals.css) and outranks any utility.
+          inPill &&
+            "absolute! bottom-0 data-[open=false]:border-transparent data-[open=false]:bg-transparent data-[open=false]:shadow-none data-[open=false]:backdrop-blur-none data-[open=false]:hover:bg-element-hover",
+          inPill && "right-0",
           // The width cap leaves the bar's padding, the share button beside
           // it and the gap between them, so the panel never runs past the
           // reader's edge.
@@ -191,7 +227,7 @@ export function CommentsMorph({
           </header>
 
           <ul className="-mx-1 min-h-0 flex-1 overflow-y-auto hide-scrollbar">
-            {threads.length === 0 ? (
+            {!armed ? null : threads.length === 0 ? (
               <li className="px-2 py-10 text-center text-xs text-muted-foreground">
                 {query
                   ? "No comments match."
@@ -302,4 +338,4 @@ export function CommentsMorph({
       )}
     </div>
   );
-}
+});

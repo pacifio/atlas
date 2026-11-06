@@ -17,6 +17,12 @@ describe("resolveProfile", () => {
     expect(r.byAction.get("panels.left")![0]!.source).toBe("default");
     expect(r.unknownActionIds).toEqual([]);
   });
+  it("⌘B keeps the id it always had, so a user's rebinding of it still applies", () => {
+    expect(ACTIONS.find((a) => a.id === "panels.left")?.title).toBe("Toggle Files");
+    const r = resolveProfile(profile({ "panels.left": ["cmd+shift+l"] }));
+    expect(r.byAction.get("panels.left")!.map((b) => b.serialized)).toEqual(["cmd+shift+l"]);
+    expect(r.unknownActionIds).toEqual([]);
+  });
   it("override replaces, null unbinds, missing keeps default", () => {
     const r = resolveProfile(profile({ "panels.left": ["cmd+shift+l"], "panels.right": null }));
     expect(r.byAction.get("panels.left")!.map((b) => b.serialized)).toEqual(["cmd+shift+l"]);

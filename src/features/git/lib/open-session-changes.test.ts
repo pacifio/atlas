@@ -4,6 +4,7 @@ import { act, renderHook } from "@testing-library/react";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { openSessionChanges } from "./open-session-changes";
 import { useDiffJump } from "./diff-jump";
+import { useDiffPanelStore } from "../stores/diff-panel-store";
 
 const chat = (id: string) => ({
   id,
@@ -21,6 +22,7 @@ const open = (sessionId: string, file: string) =>
 
 beforeEach(() => {
   useLayoutStore.setState(useLayoutStore.getInitialState(), true);
+  useDiffPanelStore.setState({ scope: {}, turn: {} });
   layout().actions.addTab(chat("chat-1"));
 });
 
@@ -56,6 +58,25 @@ describe("openSessionChanges", () => {
     open("s2", "b.ts");
     expect(layout().groupOrder).toHaveLength(2);
     expect(groupOf("session-changes:s2")).toBe(groupOf("session-changes:s1"));
+  });
+
+  it("shows the turn asked for in the panel's turn scope", () => {
+    openSessionChanges({ projectPath: "/p", sessionId: "s1", file: "a.ts", turnId: "t:m1" });
+    const panel = useDiffPanelStore.getState();
+    expect(panel.scope["session-changes:s1"]).toBe("turn");
+    expect(panel.turn["session-changes:s1"]).toBe("t:m1");
+  });
+
+  it("takes a panel left on a turn back to Changes when no turn is asked for", () => {
+    openSessionChanges({ projectPath: "/p", sessionId: "s1", file: "a.ts", turnId: "t:m1" });
+    open("s1", "b.ts");
+    expect(useDiffPanelStore.getState().scope["session-changes:s1"]).toBe("branch-range");
+  });
+
+  it("leaves a git scope the reader chose alone", () => {
+    useDiffPanelStore.getState().actions.setScope("session-changes:s1", "working-tree");
+    open("s1", "b.ts");
+    expect(useDiffPanelStore.getState().scope["session-changes:s1"]).toBe("working-tree");
   });
 
   it("delivers the file to a view that mounts after the click, and to one already mounted", () => {

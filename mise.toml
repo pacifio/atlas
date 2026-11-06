@@ -2,5 +2,5 @@
 # so a local `mise install` gives the versions CI tests with. Rust is pinned in
 # rust-toolchain.toml, which rustup reads on its own.
 [tools]
-bun = "1.4.0"
-node = "24"
+bun = "1.4.4"
+node = "26"

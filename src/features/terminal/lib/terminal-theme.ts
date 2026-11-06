@@ -1,24 +1,15 @@
 /**
  * The terminal palette, from the active theme.
  *
- * Two renderers draw terminal output and they must agree, because a block
- * scrolls off into history while the alt screen is live:
- *
- *  - the BLOCK renderer (`line-emulator.ts`) emits React inline styles, so it
- *    can name `var(--atlas-terminal-ansi-red)` and recolour with no work at
- *    all when the applier rewrites `:root`;
- *  - the alt-screen SURFACE is xterm, whose `ITheme` is 19 concrete strings
- *    handed to a WebGL renderer — a `var()` would arrive as literal text.
- *
- * So this module is the xterm half: resolved values (decision 14) plus an
- * `applyTerminalTheme` that pushes a new palette into a terminal that already
- * exists. `terminal-session.ts` subscribes every live xterm to
- * `atlas:theme-applied`, so switching theme recolours the running vim rather
- * than the next one.
+ * The terminal is xterm, whose `ITheme` is concrete strings handed to a WebGL
+ * renderer — a `var()` would arrive as literal text. So this module resolves
+ * the values (decision 14), and `terminal-session.ts` subscribes every live
+ * xterm to `atlas:theme-applied` and pushes the new palette in, so switching
+ * theme recolours open terminals rather than the next one.
  */
 import type { ITheme } from "@xterm/xterm";
-import { withAlpha } from "@/features/theme/color";
-import { alphaOf, themeColor, themeDerived } from "@/features/theme/theme-values";
+import { themeColor, themeDerived } from "@/features/theme/theme-values";
+import { withAlpha, alphaOf } from "@tryatlas/design/theme";
 
 /** Build an xterm `ITheme` from the active theme's `terminal.*` keys. */
 export function terminalTheme(): ITheme {

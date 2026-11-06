@@ -1,151 +1,15 @@
-// Bridge to the native `atlas-gitdiff` engine (Rust) — structured side-by-side
-// diffs with word-level change spans, plus editor-gutter line classification.
+// Bridge to the native `atlas-gitdiff` engine (Rust) for the editor gutter's
+// line classification, and the entry point that opens the review diff.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { QueryClient } from "@tanstack/react-query";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
-import { useSettingsStore } from "@/features/settings/stores/settings-store";
-
-export type DiffLineKind = "context" | "added" | "removed" | "changed";
-
-export interface DiffSegment {
-  text: string;
-  /** A word-level changed span within a modified line. */
-  emph: boolean;
-}
-
-export interface DiffSide {
-  lineNo: number;
-  kind: DiffLineKind;
-  segments: DiffSegment[];
-}
-
-export interface DiffRow {
-  left: DiffSide | null;
-  right: DiffSide | null;
-}
-
-export interface FileDiff {
-  path: string;
-  language: string;
-  isBinary: boolean;
-  rows: DiffRow[];
-  stats: { additions: number; deletions: number };
-  /** Row indices that start a contiguous change — for "N differences" + nav. */
-  changeBlocks: number[];
-}
+import { requestDiffJump } from "./diff-jump";
+import { openCommit } from "./open-commit";
 
 export interface DiffLineStatus {
   added: number[];
   changed: number[];
   deletedBefore: number[];
-}
-
-/**
- * Cache key for one file's structured diff.
- *
- * Shared rather than inlined in the viewer so a caller can PREFETCH under the
- * exact same key. The chat knows a turn's before/after text at the moment the
- * reader clicks, but the fetch would otherwise not start until the modal had
- * mounted — serialising an IPC round trip behind the open animation instead of
- * overlapping it.
- */
-export function diffQueryKey(
-  repoPath: string,
-  file: string,
-  staged: boolean,
-  commit: string | null,
-  textSource?: { old: string; new: string },
-) {
-  return [
-    "git-diff",
-    repoPath,
-    file,
-    staged,
-    commit,
-    // Part of the key: two turns editing the same path must not share an entry,
-    // and they differ only by their text.
-    textSource ? `${textSource.old.length}:${textSource.new.length}` : null,
-    // And the setting, so switching it refetches rather than serving the other.
-    hideWhitespace(),
-  ] as const;
-}
-
-/**
- * `diffIgnoreWhitespace`, for the diffs that are only read: this file's, a
- * commit's, a chat's. Never for a diff that can be staged from (Source
- * Control's changes list), since a patch without the whitespace no longer
- * applies. A view that uses it subscribes to the setting, so it re-renders,
- * and so re-keys, when it changes.
- */
-export function hideWhitespace(): boolean {
-  return useSettingsStore.getState().settings.diffIgnoreWhitespace;
-}
-
-/** Warm the cache for a text-sourced diff, so the viewer mounts onto data. */
-export function prefetchTextDiff(
-  queryClient: QueryClient,
-  repoPath: string,
-  file: string,
-  source: { old: string; new: string },
-): void {
-  if (!file) return;
-  void queryClient.prefetchQuery({
-    queryKey: diffQueryKey(repoPath, file, false, null, source),
-    queryFn: () => diffStructuredText(source.old, source.new, file),
-    staleTime: 10_000,
-  });
-}
-
-export function gitDiffStructured(
-  repoPath: string,
-  file: string,
-  staged: boolean,
-  /** When set, show the diff introduced by this commit (via `git show`). */
-  commit?: string | null,
-): Promise<FileDiff> {
-  return invoke<FileDiff>("git_diff_structured", {
-    path: repoPath,
-    file,
-    staged,
-    commit: commit ?? null,
-    ignoreWhitespace: hideWhitespace(),
-  });
-}
-
-/**
- * Structured diff between two texts — no repository involved.
- *
- * For agent-turn changes, whose before/after text lives only in the tool call's
- * arguments. Git cannot answer for those: the working tree is the current state,
- * not the state at that turn.
- *
- * NOTE on scope: `Edit`-style calls carry FRAGMENTS (the replaced snippet), so
- * the diff covers that fragment and its line numbers start at 1. `Write` calls
- * carry whole content and diff faithfully — which is why a newly created file
- * renders in full.
- */
-export function diffStructuredText(
-  oldText: string,
-  newText: string,
-  file: string,
-): Promise<FileDiff> {
-  return invoke<FileDiff>("diff_structured_text", {
-    oldText,
-    newText,
-    file,
-    ignoreWhitespace: hideWhitespace(),
-  });
-}
-
-export interface CommitFile {
-  path: string;
-  status: string;
-}
-
-/** Files changed by a single commit (for the diff viewer's commit browser). */
-export function gitCommitChangedFiles(repoPath: string, sha: string): Promise<CommitFile[]> {
-  return invoke<CommitFile[]>("git_commit_changed_files", { path: repoPath, sha });
 }
 
 export function gitDiffLineStatus(
@@ -156,27 +20,42 @@ export function gitDiffLineStatus(
   return invoke<DiffLineStatus>("git_diff_line_status", { path: repoPath, file, staged });
 }
 
+/** The review diff's tab id for a repository: one per repository. */
+export function diffTabId(repoPath: string): string {
+  return `diff:${repoPath}`;
+}
+
 /**
- * Open (or focus) the dedicated side-by-side diff tab for a file. Tabs are keyed
- * by file + staged-ness so the staged and worktree diffs of the same file are
- * distinct tabs and re-opening focuses the existing one.
+ * Show `file`'s change in the review diff beside the session.
+ *
+ * One review tab per repository: opening another file focuses it and scrolls
+ * to that file rather than stacking a tab per file. The working-tree scope
+ * covers staged and unstaged changes alike, so `staged` picks nothing apart
+ * from it today. With `commit`, the change is that commit's, which the commit
+ * tab shows.
  */
 export function openGitDiff(
   repoPath: string,
   file: string,
-  staged: boolean,
+  _staged: boolean,
   commit?: string | null,
 ): void {
-  const base = file.split("/").pop() ?? file;
-  const id = `diff:${file}:${staged ? "s" : "w"}${commit ? `:${commit}` : ""}`;
+  if (commit) {
+    openCommit(repoPath, commit);
+    return;
+  }
+  const id = diffTabId(repoPath);
+  // The scope stays the reader's: a new tab starts on the working tree, and
+  // an open one keeps whatever they chose.
+  if (file) requestDiffJump(id, file);
   const { addTab, setActiveTab } = useLayoutStore.getState().actions;
   addTab({
     id,
     type: "diff",
-    title: base,
+    title: "Changes",
     closable: true,
     dirty: false,
-    data: { repoPath, file, staged, commit: commit ?? null },
+    data: { repoPath },
   });
   setActiveTab(id);
 }

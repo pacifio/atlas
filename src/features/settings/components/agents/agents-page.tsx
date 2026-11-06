@@ -1,4 +1,4 @@
-// Settings → Agents, after T3 Code's Providers page: one card, the agents the
+// Settings → Agents: one card, the agents the
 // user has on the left and the picked one's settings on the right. Browsing
 // the ACP registry for more is the Add agent dialog.
 
@@ -7,12 +7,7 @@ import { Plus, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { timeAgo } from "@/lib/time-ago";
 import { formatDateTime } from "@/lib/format-time";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
-import { Switch } from "@/ui/switch";
-import { AgentMark } from "@/components/agent-mark";
+import { AgentMark } from "@/components/brand-marks";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
 import { SettingsPage, SettingsSection } from "../layout/settings-layout";
 import { usePageScope } from "../../lib/use-scoped-setting";
@@ -31,6 +26,7 @@ import { AgentEditor, versionOf } from "./agent-editor";
 import { AddAgentDialog } from "./add-agent-dialog";
 import { AllAgentsSection } from "./agent-settings-sections";
 import { ProviderKeysSection } from "./provider-keys";
+import { Button, Icon, IconButton, Hint, Switch } from "@tryatlas/design";
 
 export function AgentsPage() {
   useRevalidatedListing();
@@ -39,7 +35,7 @@ export function AgentsPage() {
   const items = useMemo(
     () => libraryItems(registryEntries, catalogById),
     // `signature` moves whenever the arrays do; they are not stable refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [signature],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);

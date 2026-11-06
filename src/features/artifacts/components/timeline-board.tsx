@@ -9,21 +9,22 @@
  *
  * The frame is a centred column: a reading measure, not a stretched table.
  * One sticky date names the day you are in and changes as you scroll
- * ({@link TimelineCalendar}); the filters sit in the header beside the title;
- * the search bar floats at the foot over a fade, where your hands are, rather
- * than competing with the filters at the top.
+ * ({@link TimelineCalendar}); the filters sit in the destination bar beside the
+ * page title (ADR-0024), so the page draws no heading of its own; the search
+ * bar floats at the foot over a fade, where your hands are.
  */
 
 import { useCallback, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DestinationActions } from "@/features/layout/components/destination-actions";
 import type { BoardSession } from "../types";
 import { boardKey } from "../lib/board-key";
 import { dayHeading, startOfDay } from "../lib/board";
 import type { AuthorDirectory } from "../lib/author-directory";
 import { DayMeta, SessionRow } from "./session-row";
 import { BoardSkeleton } from "./timeline-skeleton";
-import { TimelineCalendar, type CalendarItem } from "./timeline-calendar";
+import { TimelineCalendar, type CalendarItem } from "@tryatlas/design/timeline-calendar";
 
 export function TimelineBoard({
   sessions,
@@ -90,7 +91,7 @@ export function TimelineBoard({
         session={s}
         directory={directory}
         selected={boardKey(s) === openKey}
-        onOpen={() => onOpen(s)}
+        onOpen={onOpen}
       />
     ),
     [directory, openKey, onOpen],
@@ -100,17 +101,24 @@ export function TimelineBoard({
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={scroller} className="@container hide-scrollbar min-h-0 flex-1 overflow-y-auto">
         <div className="flex min-h-full flex-col px-2 @5xl:px-10">
-          <div className="relative mx-auto flex w-full max-w-232 flex-1 flex-col gap-6 px-5 pt-8 pb-32">
-            <header className="flex flex-wrap items-center justify-between gap-3">
-              <h1 className="text-xl font-medium tracking-tight">Timeline</h1>
-              <div className="flex flex-wrap items-center gap-2">{filters}</div>
-            </header>
+          <div className="relative mx-auto flex w-full max-w-232 flex-1 flex-col gap-6 px-5 pt-6 pb-32">
+            {filters && (
+              <DestinationActions>
+                <div className="flex shrink-0 items-center gap-2">{filters}</div>
+              </DestinationActions>
+            )}
 
             {items.length > 0 ? (
               <TimelineCalendar
                 items={items}
                 renderRow={renderRow}
                 root={scroller as RefObject<HTMLElement | null>}
+                // Measured: this column's `pb-32` (room under the search bar)
+                // and the note follow the list in the scroller, and a plain
+                // `endSpace` would add its room on top of theirs, so the last
+                // day overshot the sticky date. `"measure"` subtracts them, so
+                // the end stops with the last day under the date.
+                endSpace="measure"
               />
             ) : loading ? (
               // Geometry-matched rows rather than a spinner: the shape of what
@@ -157,7 +165,7 @@ export function TimelineBoard({
             aria-label="Search sessions"
             spellCheck={false}
             maxLength={256}
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-[var(--atlas-text-disabled)]"
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-disabled"
           />
           {query && (
             <button

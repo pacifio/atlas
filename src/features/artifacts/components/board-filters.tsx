@@ -17,19 +17,20 @@ import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import {
   projectFilterFor,
   projectFilterKey,
   type BoardSession,
   type ProjectFilter,
 } from "../types";
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { agentLabel } from "../lib/board";
 import { authorOf, type AuthorDirectory } from "../lib/author-directory";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * The pill: a quiet label welded to a bright value, split by a hairline.
@@ -73,7 +74,10 @@ function Option({
   children: ReactNode;
 }) {
   return (
-    <DropdownMenuItem onClick={onSelect}>
+    // The tick is drawn, so the state is announced too. These are menu items,
+    // where `aria-pressed` is not allowed: the menu equivalent is a
+    // `menuitemcheckbox` carrying `aria-checked`.
+    <DropdownMenuItem role="menuitemcheckbox" aria-checked={selected} onClick={onSelect}>
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {count !== undefined && (
         <span className="shrink-0 tabular-nums text-2xs text-muted-foreground">{count}</span>
@@ -124,6 +128,7 @@ export function BoardFilters({
   peopleFilter: (string | null)[];
   onPeopleFilter: (people: (string | null)[]) => void;
 }) {
+  const resolveAgent = useAgentMetaResolver();
   // Keyed on the folder when there is one and the server id when there is
   // not, so a teammate's Project with no checkout here is choosable too.
   const filterOf = new Map<string, ProjectFilter>();
@@ -205,7 +210,7 @@ export function BoardFilters({
           render={
             <CompoundFilter label="Agent" aria-label="Filter by agent">
               <span className="max-w-32 truncate">
-                {agentFilter === null ? "Any" : agentLabel(agentFilter)}
+                {agentFilter === null ? "Any" : agentLabel(agentFilter, resolveAgent)}
               </span>
               <ChevronDown size={12} className="shrink-0 text-muted-foreground" />
             </CompoundFilter>
@@ -222,7 +227,7 @@ export function BoardFilters({
               count={a.count}
               onSelect={() => onAgentFilter(agentFilter === a.value ? null : a.value)}
             >
-              {agentLabel(a.value)}
+              {agentLabel(a.value, resolveAgent)}
             </Option>
           ))}
         </DropdownMenuContent>

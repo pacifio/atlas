@@ -66,7 +66,7 @@ export function useEditorOutline(editor: Editor | null): OutlineHeading[] {
   return useMemo(
     () => (editor ? extractOutline(editor) : []),
     // version forces recompute when the editor reports an update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
     [editor, version],
   );
 }

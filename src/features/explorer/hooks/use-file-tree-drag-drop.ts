@@ -53,6 +53,9 @@ export function useFileTreeDragDrop(opts: {
   rootPath: string | null;
   onMove: (src: string, destDir: string) => void;
   onAutoExpand: (path: string) => void;
+  /** This tree's own container. With several trees mounted (the Files surface
+   *  and file tabs in other columns), a drop over another one is not ours. */
+  scopeRef?: React.RefObject<HTMLElement | null>;
 }) {
   const [dragState, setDragState] = useState<FileTreeDragState>(INITIAL);
 
@@ -64,6 +67,7 @@ export function useFileTreeDragDrop(opts: {
   onMoveRef.current = opts.onMove;
   const onAutoExpandRef = useRef(opts.onAutoExpand);
   onAutoExpandRef.current = opts.onAutoExpand;
+  const scopeRef = opts.scopeRef;
 
   const itemRef = useRef<DraggedItem | null>(null);
   const overRef = useRef<string | null>(null);
@@ -122,11 +126,19 @@ export function useFileTreeDragDrop(opts: {
   const resolveTarget = useCallback(
     (x: number, y: number, dragged: DraggedItem) => {
       const el = document.elementFromPoint(x, y);
-      const rowEl = el?.closest<HTMLElement>("[data-tree-path]");
+      const scope = scopeRef?.current;
+      if (scope && (!el || !scope.contains(el))) {
+        clearAutoExpand();
+        return null;
+      }
+      // A folder name inside a compacted row (`vendor / engine`) is a
+      // drop target of its own; the row as a whole is its innermost folder.
+      const segment = el?.closest<HTMLElement>("[data-tree-drop-path]");
+      const rowEl = segment ?? el?.closest<HTMLElement>("[data-tree-path]");
       if (rowEl) {
-        const path = rowEl.getAttribute("data-tree-path");
+        const path = rowEl.getAttribute(segment ? "data-tree-drop-path" : "data-tree-path");
         if (!path) return null;
-        const isDir = rowEl.getAttribute("data-tree-is-dir") === "true";
+        const isDir = !!segment || rowEl.getAttribute("data-tree-is-dir") === "true";
         // Refuse dropping a folder onto itself or a descendant.
         if (path === dragged.path || (dragged.isDir && path.startsWith(dragged.path + "/"))) {
           return null;
@@ -147,7 +159,7 @@ export function useFileTreeDragDrop(opts: {
       clearAutoExpand();
       return null;
     },
-    [scheduleAutoExpand, clearAutoExpand],
+    [scheduleAutoExpand, clearAutoExpand, scopeRef],
   );
 
   const beginDrag = useCallback(

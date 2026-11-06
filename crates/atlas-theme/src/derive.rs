@@ -2,9 +2,10 @@
 //!
 //! The rules are `[[base]]` in `keys.toml`, generated into `base-rules.txt`
 //! (read here) and into the TS registry (read by `resolveBase` in
-//! `resolve-theme.ts`). This file is the interpreter, and it must agree with
-//! that function to the last digit: `tests/base_derivation.rs` and
-//! `resolve-theme.test.ts` both check the same golden fixture.
+//! `@tryatlas/design`'s `src/theme/resolve-theme.ts`). This file is the
+//! interpreter, and it must agree with that function to the last digit:
+//! `tests/base_derivation.rs` and the package's `resolve-theme.test.ts` both
+//! check the same golden fixture.
 //!
 //! Rust runs it where a theme leaves Rust: import, which pins what it derives,
 //! and export, which writes the whole shadcn set. Everything else receives the

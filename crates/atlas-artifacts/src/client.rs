@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use crate::error::{Error, Result};
 use crate::model::{
-    ArtifactShare, Comment, EntryPayload, InboxPage, SessionBoardPage, SessionDetailPage,
+    ArtifactShare, Comment, EntryPayload, InboxKind, InboxPage, SessionBoardPage,
+    SessionDetailPage, TracePage,
 };
 use crate::{ingest_base, AnchorKind, TokenSource};
 
@@ -37,6 +38,14 @@ const ENTRY_PAGE: u32 = 500;
 /// Session cannot turn one click into an unbounded crawl.
 const MAX_ENTRY_PAGES: usize = 40;
 
+/// What [`ArtifactsClient::mark_inbox_read`] marks: some entries (1–100 ids,
+/// the server's bound), or every entry in one Organisation.
+#[derive(Debug, Clone, Copy)]
+pub enum InboxRead<'a> {
+    Ids(&'a [String]),
+    All { org_id: &'a str },
+}
+
 /// The most an inbox page may hold. The server clamps at 100 and silently
 /// falls back to its default of 50 past it, so a larger ask is clamped here
 /// rather than quietly answered with fewer.
@@ -51,6 +60,18 @@ pub const ENTRY_PAGE_MAX: u32 = 500;
 /// The longest keyword the server's search accepts, in characters; a longer
 /// one is refused rather than cut, so it is cut here.
 pub const SEARCH_MAX_CHARS: usize = 256;
+
+/// What one trace read asks for: a window, and optionally one Workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TraceQuery<'a> {
+    /// RFC 3339. The server allows at most 92 days between the two.
+    pub from: &'a str,
+    pub to: &'a str,
+    /// One Workspace — the per-project trace — or every one the person can see.
+    pub workspace_id: Option<&'a str>,
+    /// Where the previous page's `next_cursor` left off.
+    pub cursor: Option<&'a str>,
+}
 
 /// Which page of the board to read, and how narrowly.
 ///
@@ -235,6 +256,23 @@ impl ArtifactsClient {
             req = req.query(&[("cursor", cursor)]);
         }
         self.send(req, "board").await
+    }
+
+    /// One page of the trace: the Sessions active in a window, each with its
+    /// Checkpoints. The caller walks `next_cursor`.
+    pub async fn trace_page(&self, org_id: &str, query: TraceQuery<'_>) -> Result<TracePage> {
+        let mut req = self
+            .http
+            .get(format!("{}/sessions/trace", self.base))
+            .bearer_auth(self.token().await?)
+            .query(&[("org", org_id), ("from", query.from), ("to", query.to)]);
+        if let Some(workspace) = query.workspace_id {
+            req = req.query(&[("workspace", workspace)]);
+        }
+        if let Some(cursor) = query.cursor {
+            req = req.query(&[("cursor", cursor)]);
+        }
+        self.send(req, "trace").await
     }
 
     /// One page of a remote Session's timeline, in the server's order
@@ -552,11 +590,11 @@ impl ArtifactsClient {
     /// One page of the signed-in person's inbox in `org_id`, newest first:
     /// mentions, replies and comments on their Sessions.
     ///
-    /// **Read-only, and the only inbox call here.** The server's mark-read
-    /// route (`POST /inbox/read`) has no caller in this crate on purpose: the
-    /// unread state is the person's, and the agent tools this backs must never
-    /// be able to clear it. There is no `user` parameter either — the server
-    /// scopes both routes to the token's subject.
+    /// **Read-only.** The agent tools this backs must never be able to clear
+    /// the person's unread state, so they read through here and nothing else;
+    /// marking read is [`Self::mark_inbox_read`], which only the window's own
+    /// command calls. There is no `user` parameter either — the server scopes
+    /// both routes to the token's subject.
     ///
     /// One page rather than a walk: `cursor` continues where `next_cursor`
     /// left off, and `limit` is clamped to [`INBOX_PAGE_MAX`].
@@ -564,6 +602,19 @@ impl ArtifactsClient {
         &self,
         org_id: &str,
         unread_only: bool,
+        cursor: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<InboxPage> {
+        self.inbox_page(org_id, unread_only, None, cursor, limit)
+            .await
+    }
+
+    /// [`Self::inbox`], narrowed to one kind — the window's "Mentions" filter.
+    pub async fn inbox_page(
+        &self,
+        org_id: &str,
+        unread_only: bool,
+        kind: Option<InboxKind>,
         cursor: Option<&str>,
         limit: Option<u32>,
     ) -> Result<InboxPage> {
@@ -575,6 +626,9 @@ impl ArtifactsClient {
         if unread_only {
             req = req.query(&[("unread", "true")]);
         }
+        if let Some(kind) = kind {
+            req = req.query(&[("kind", kind.as_str())]);
+        }
         if let Some(cursor) = cursor {
             req = req.query(&[("cursor", cursor)]);
         }
@@ -582,6 +636,23 @@ impl ArtifactsClient {
             req = req.query(&[("limit", limit.clamp(1, INBOX_PAGE_MAX).to_string())]);
         }
         self.send(req, "inbox").await
+    }
+
+    /// Mark inbox entries read: these ids, or everything in `org_id`.
+    ///
+    /// The person's own act, from the window — never an agent tool's (see
+    /// [`Self::inbox`]). `POST /inbox/read` answers `204`.
+    pub async fn mark_inbox_read(&self, target: InboxRead<'_>) -> Result<()> {
+        let body = match target {
+            InboxRead::Ids(ids) => serde_json::json!({ "ids": ids }),
+            InboxRead::All { org_id } => serde_json::json!({ "all": true, "org": org_id }),
+        };
+        let req = self
+            .http
+            .post(format!("{}/inbox/read", self.base))
+            .bearer_auth(self.token().await?)
+            .json(&body);
+        self.send_discarding_body(req, "mark inbox read").await
     }
 
     async fn token(&self) -> Result<String> {
@@ -792,6 +863,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_trace_is_one_get_with_the_window_and_the_workspace_only_when_narrowed() {
+        const EMPTY: &str =
+            r#"{"from":"a","to":"b","sessions":[],"workspaces":[],"nextCursor":null,"notes":[]}"#;
+        let (base, seen) = loopback(EMPTY).await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+        let window = TraceQuery {
+            from: "2026-10-28T00:00:00Z",
+            to: "2026-11-04T00:00:00Z",
+            ..TraceQuery::default()
+        };
+
+        client.trace_page("org_1", window).await.unwrap();
+        client
+            .trace_page(
+                "org_1",
+                TraceQuery {
+                    workspace_id: Some("ws_1"),
+                    cursor: Some("c2"),
+                    ..window
+                },
+            )
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        let lines: Vec<&str> = seen.iter().map(|r| r.lines().next().unwrap()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "GET /sessions/trace?org=org_1&from=2026-10-28T00%3A00%3A00Z&to=2026-11-04T00%3A00%3A00Z HTTP/1.1",
+                "GET /sessions/trace?org=org_1&from=2026-10-28T00%3A00%3A00Z&to=2026-11-04T00%3A00%3A00Z&workspace=ws_1&cursor=c2 HTTP/1.1",
+            ],
+            "the whole Organisation leaves `workspace` out; one project names it"
+        );
+    }
+
+    #[tokio::test]
     async fn the_whole_inbox_omits_the_unread_filter() {
         let (base, seen) = loopback(ONE_UNREAD).await;
         let client = ArtifactsClient::at(&base, Arc::new(Tok));
@@ -804,6 +912,42 @@ mod tests {
             seen[0].lines().next().unwrap(),
             "GET /inbox?org=org_1 HTTP/1.1"
         );
+    }
+
+    #[tokio::test]
+    async fn the_mentions_filter_is_the_kind_query() {
+        let (base, seen) = loopback(ONE_UNREAD).await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+
+        client
+            .inbox_page("org_1", false, Some(crate::InboxKind::Mention), None, None)
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen[0].lines().next().unwrap(),
+            "GET /inbox?org=org_1&kind=artifact_mention HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn marking_read_is_one_post_on_the_read_route() {
+        let (base, seen) = loopback("").await;
+        let client = ArtifactsClient::at(&base, Arc::new(Tok));
+
+        let ids = vec!["n1".to_string()];
+        client.mark_inbox_read(InboxRead::Ids(&ids)).await.unwrap();
+        client
+            .mark_inbox_read(InboxRead::All { org_id: "org_1" })
+            .await
+            .unwrap();
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        for request in &seen {
+            assert_eq!(request.lines().next().unwrap(), "POST /inbox/read HTTP/1.1");
+        }
     }
 
     // ── One board page and one timeline page, as the organisation tools read them ──

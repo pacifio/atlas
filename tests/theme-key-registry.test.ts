@@ -8,10 +8,20 @@ import {
   staleOutputs,
   cssVar,
   keyDescription,
+  packageRoot,
 } from "../scripts/generate-theme-keys.mjs";
+import {
+  BASE_RULE_REGISTRY,
+  DERIVED_VAR_REGISTRY,
+  THEME_KEY_REGISTRY,
+} from "@tryatlas/design/theme";
 
 /**
- * The theme-key registry has one source: `crates/atlas-theme/keys.toml`.
+ * The theme-key registry has one source: `keys.toml`, which
+ * `@tryatlas/design` owns and desktop copies to `crates/atlas-theme/keys.toml`
+ * (ADR-0027). The package generates the TS registry and the Rust tables;
+ * desktop generates the schema's key set and the reference doc's table from
+ * its copy. `design-package-copies.test.ts` holds the copies to the package.
  *
  * The same facts used to live in five files — the TS registry, the Rust key
  * list, the JSON Schema, this repo's reference doc and the public one — each
@@ -49,19 +59,20 @@ describe("the generated theme-key registry", () => {
    * The failure this suite exists for. `bun run theme:keys` fixes it; the
    * message names the files rather than making you bisect four diffs.
    */
-  it("has no generated file that has drifted from crates/atlas-theme/keys.toml", () => {
+  it("has no copied or generated file that has drifted from the package", () => {
     const stale = staleOutputs().map((entry) => entry.path);
     expect(stale, "run `bun run theme:keys`").toEqual([]);
   });
 
   it("names every key in each generated file", () => {
-    const registry = read(OUTPUTS.registry);
+    const registry = new Set<string>(THEME_KEY_REGISTRY.map((definition) => definition.key));
     const keyList = read(OUTPUTS.keyList);
     const docs = read(OUTPUTS.docs);
     const schemaKeys = JSON.parse(read(OUTPUTS.schema)).definitions.ThemeVariant.properties.keys;
 
+    expect(registry.size).toBe(source.keys.length);
     for (const key of source.keys) {
-      expect(registry, key.name).toContain(`define("${key.name}", {`);
+      expect(registry.has(key.name), key.name).toBe(true);
       expect(keyList, key.name).toContain(`\n${key.name}\t`);
       expect(docs, key.name).toContain(`| \`${key.name}\` |`);
       expect(schemaKeys.properties[key.name]?.description).toBe(keyDescription(key));
@@ -90,17 +101,68 @@ describe("the generated theme-key registry", () => {
     expect(fromRust).toEqual(source.keys.map((key) => key.name));
   });
 
-  /** The CSS variable name is the contract with every `var(--atlas-…)` call. */
+  /** The CSS variable name is the contract with every `var(--…)` call. */
   it("keeps the CSS variable spelling of every key", () => {
-    const registry = read(OUTPUTS.registry);
+    const registry = new Map(THEME_KEY_REGISTRY.map((definition) => [definition.key, definition]));
     for (const key of source.keys) {
-      expect(cssVar(key.name)).toBe(
-        `--atlas-${key.name.replaceAll(".", "-").replaceAll("_", "-")}`,
-      );
+      expect(cssVar(key.name)).toBe(`--${key.name.replaceAll(".", "-").replaceAll("_", "-")}`);
+      expect(registry.get(key.name as never)?.cssVar, key.name).toBe(cssVar(key.name));
     }
-    expect(registry).toContain(
-      'cssVar: `--atlas-${key.replaceAll(".", "-").replaceAll("_", "-")}`',
-    );
+  });
+
+  /**
+   * Keys carry no prefix (ADR-0027), so `.` and `_` both becoming `-` is the
+   * whole mapping, and it shares one `:root` namespace with the derived
+   * variables, the shadcn base tokens and Tailwind's `@theme`. Two names on one
+   * variable is invisible at runtime: the later write wins and the other
+   * consumer paints the wrong colour. The generator refuses such a source too;
+   * this holds the generated registry to it.
+   */
+  it("maps every key to a CSS variable nothing else uses", () => {
+    const owners = new Map<string, string[]>();
+    const claim = (variable: string, owner: string) =>
+      owners.set(variable, [...(owners.get(variable) ?? []), owner]);
+
+    for (const rule of BASE_RULE_REGISTRY) claim(`--${rule.token}`, `base.${rule.token}`);
+    for (const font of ["font-sans", "font-serif", "font-mono"]) claim(`--${font}`, `base.${font}`);
+    // Every variable a Tailwind `@theme` block declares: a key landing on one
+    // would be read as that namespace's value (`--text-*` is a font size).
+    // Comments out first: prose mentioning "@theme" is not a block. Desktop's
+    // own stylesheet and the package's Tailwind bridge both declare some.
+    const globals = [
+      read("src/styles/globals.css"),
+      readFileSync(path.join(packageRoot(), "src/styles/utilities.css"), "utf8"),
+    ]
+      .join("\n")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const blocks = [...globals.matchAll(/^@theme\b[^{]*\{/gm)].map((m) => m.index!);
+    expect(blocks.length, "the @theme blocks").toBeGreaterThan(0);
+    for (const start of blocks) {
+      let depth = 0;
+      let end = globals.indexOf("{", start);
+      do {
+        if (globals[end] === "{") depth++;
+        if (globals[end] === "}") depth--;
+        end++;
+      } while (depth > 0);
+      for (const [, variable] of globals.slice(start, end).matchAll(/(--[\w-]+)\s*:/g)) {
+        if (!owners.get(variable)?.includes("@theme")) claim(variable, "@theme");
+      }
+    }
+    for (const definition of THEME_KEY_REGISTRY) claim(definition.cssVar, definition.key);
+    for (const definition of DERIVED_VAR_REGISTRY) claim(definition.cssVar, definition.name);
+
+    const keyVars = [
+      ...THEME_KEY_REGISTRY.map((definition) => definition.cssVar),
+      ...DERIVED_VAR_REGISTRY.map((definition) => definition.cssVar),
+    ];
+    // Floor guard, so an empty registry cannot pass vacuously.
+    expect(keyVars.length).toBe(source.keys.length + source.derived.length);
+    for (const variable of keyVars) expect(variable).not.toMatch(/^--atlas-/);
+    const collisions = keyVars
+      .filter((variable) => owners.get(variable)!.length > 1)
+      .map((variable) => `${variable}: ${owners.get(variable)!.join(", ")}`);
+    expect(collisions).toEqual([]);
   });
 
   /**
@@ -123,7 +185,7 @@ describe("the generated theme-key registry", () => {
       expect(Boolean(entry.from) !== Boolean(entry.base), entry.name).toBe(true);
       if (entry.from)
         expect(keyNames.has(entry.from), `${entry.name} derives from no key`).toBe(true);
-      expect(read(OUTPUTS.registry)).toContain(`derive("${entry.name}", {`);
+      expect(DERIVED_VAR_REGISTRY.some((definition) => definition.name === entry.name)).toBe(true);
     }
   });
 

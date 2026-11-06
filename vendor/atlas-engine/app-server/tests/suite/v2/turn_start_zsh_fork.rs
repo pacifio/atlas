@@ -552,7 +552,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
     let mut target_decision_index = 0;
     let first_file_str = first_file.to_string_lossy().into_owned();
     let second_file_str = second_file.to_string_lossy().into_owned();
-    let parent_shell_hint = format!("&& {}", &first_file_str);
+    let parent_shell_hint = format!("&& {first_file_str}");
     while target_decision_index < target_decisions.len() || !saw_parent_approval {
         let server_req = timeout(
             DEFAULT_READ_TIMEOUT,

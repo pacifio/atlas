@@ -3,15 +3,16 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { onThreadsChanged, threadHistory } from "../lib/history-api";
 import { useLiveElsewhereStore } from "../stores/live-elsewhere-store";
+import { useSessionProjectsStore } from "../stores/session-projects-store";
 
 /*
  * Feeds `live-elsewhere-store` with every session another process is writing
  * (ADR-0001 amendment, Rule 7). The composer mounts it, so the guard holds
- * whichever view the session was opened from — the sidebar, the History view
- * (archived rows included), another project.
+ * whichever view the session was opened from — the sidebar, the History view,
+ * another project.
  *
  * One source, one writer: the query below reads the whole history store
- * (`threads_history`, archived or not, with Rust's `liveElsewhere`) and its
+ * (`threads_history`, every row, with Rust's `liveElsewhere`) and its
  * `queryFn` is the only caller of `setLive`. Every mounted composer observes
  * the same query, so N composers cost one IPC per refresh, not N. Refreshes
  * ride `atlas:threads-changed`, which the backend also fires when the clock
@@ -23,9 +24,13 @@ import { useLiveElsewhereStore } from "../stores/live-elsewhere-store";
 export const LIVE_ELSEWHERE_QUERY_KEY = ["thread-history", "live-elsewhere"] as const;
 
 async function fetchLiveElsewhere(): Promise<string[]> {
-  const rows = await threadHistory(false);
+  const rows = await threadHistory();
   const ids = rows.flatMap((row) => (row.liveElsewhere && row.sessionId ? [row.sessionId] : []));
   useLiveElsewhereStore.getState().actions.setLive(ids);
+  // The same rows carry each session's attached projects, which the
+  // composer's project chips read. Riding this read keeps it one IPC and one
+  // listener per refresh rather than a second feed doing the same work.
+  useSessionProjectsStore.getState().actions.mergeRows(rows);
   return ids;
 }
 

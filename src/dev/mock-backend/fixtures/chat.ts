@@ -34,8 +34,23 @@ export function thinking(thought: string, at = t(0)): SessionMessage {
   };
 }
 
-/** One assistant message carrying tool calls. */
+/**
+ * One assistant message carrying tool calls.
+ *
+ * Settled calls are timed the way Rust stamps them — `started_at_ms` at first
+ * sight, `ended_at_ms` when they settled — laid end to end from `at`, each
+ * taking its `took` (a fifth of a second unless the call says otherwise). A
+ * call still running keeps no times: the live one is stamped by whoever drives
+ * it, against the real clock.
+ */
 export function tools(calls: ToolCall[], at = t(0)): SessionMessage {
+  let cursor = Date.parse(at);
+  for (const c of calls) {
+    if (c.status !== "completed" && c.status !== "failed") continue;
+    if (c.started_at_ms === undefined) c.started_at_ms = cursor;
+    if (c.ended_at_ms === undefined) c.ended_at_ms = c.started_at_ms + (took.get(c) ?? 200);
+    cursor = c.ended_at_ms;
+  }
   return {
     id: id("tm"),
     role: "assistant",
@@ -48,11 +63,17 @@ export function tools(calls: ToolCall[], at = t(0)): SessionMessage {
 
 /** `parent_tool_call_id` is here because a subagent's own calls are ordinary
  *  tool calls that happen to name the launch they belong to — the only thing
- *  that tells a child's work apart from its parent's. */
-type Opts = Partial<Pick<ToolCall, "status" | "result" | "id" | "parent_tool_call_id">>;
+ *  that tells a child's work apart from its parent's. `took` is how many
+ *  seconds the call ran, which `tools` turns into its wire times. */
+type Opts = Partial<Pick<ToolCall, "status" | "result" | "id" | "parent_tool_call_id">> & {
+  took?: number;
+};
+
+/** Each call's run time in ms, read by `tools` when it lays the calls out. */
+const took = new WeakMap<ToolCall, number>();
 
 function call(base: Omit<ToolCall, "id" | "status" | "result" | "locations">, o: Opts): ToolCall {
-  return {
+  const out: ToolCall = {
     id: o.id ?? id("tc"),
     status: o.status ?? "completed",
     result: o.result ?? null,
@@ -60,6 +81,18 @@ function call(base: Omit<ToolCall, "id" | "status" | "result" | "locations">, o:
     ...(o.parent_tool_call_id ? { parent_tool_call_id: o.parent_tool_call_id } : {}),
     ...base,
   };
+  if (o.took !== undefined) took.set(out, o.took * 1000);
+  return out;
+}
+
+/** Close a settled turn on its last message, the way a snapshot does: the
+ *  turn's wall time and how it stopped. */
+export function ended(
+  message: SessionMessage,
+  workedSeconds: number,
+  stopReason = "end_turn",
+): SessionMessage {
+  return { ...message, worked_ms: workedSeconds * 1000, stop_reason: stopReason };
 }
 
 export const tool = {

@@ -37,7 +37,7 @@ futures = "0.3"
 # The catalogue fetch (ADR-0007): one `GET /v1/catalogue` per connect, at
 # most. Same feature shape as the workspace's own stanza — no default TLS, so
 # this client sits on rustls like every other one in the app.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 serde_json = "1"
 tokio = { version = "1", features = ["fs", "macros", "rt", "sync", "time"] }
 tracing = "0.1"
@@ -46,7 +46,7 @@ tracing = "0.1"
 # No longer optional. These sat behind the `ported-engine` feature so the previous native
 # path could keep shipping while the engine was proved; that path is gone (#54),
 # so gating them would gate the whole crate.
-base64 = { version = "0.22" }
+base64 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.9" }
 # For the gateway-dialect surfaces the seam re-exports (the org source).
@@ -60,6 +60,9 @@ atlas-engine-utils-json-to-toml = { path = "../../vendor/atlas-engine/utils/json
 atlas-engine-core = { path = "../../vendor/atlas-engine/core" }
 atlas-engine-exec-server = { path = "../../vendor/atlas-engine/exec-server" }
 atlas-engine-feedback = { path = "../../vendor/atlas-engine/feedback" }
+# Re-exported (`ensure_credential_store`) so the app installs the same OS credential store
+# the engine uses; the app cannot name an engine crate itself.
+atlas-engine-keyring-store = { workspace = true }
 atlas-engine-login = { path = "../../vendor/atlas-engine/login" }
 # For the engine's bundled base prompt, which the authored catalogue (D3) uses as
 # every row's `instructions_template`.
@@ -71,6 +74,14 @@ atlas-engine-rollout = { path = "../../vendor/atlas-engine/rollout" }
 # (`helper.rs`). Already in the graph through `atlas-engine-sandboxing`.
 [target.'cfg(windows)'.dependencies]
 atlas-engine-windows-sandbox = { workspace = true }
+
+# The Linux sandbox helper, which the app becomes when started under the arg0
+# `atlas-engine-linux-sandbox` (`src/linux_sandbox.rs`), and the crate that
+# names that arg0 and finds bubblewrap. Linux-only, so the macOS and Windows
+# builds compile exactly what they did before Linux was supported.
+[target.'cfg(target_os = "linux")'.dependencies]
+atlas-engine-linux-sandbox = { workspace = true }
+atlas-engine-sandboxing = { workspace = true }
 
 [dev-dependencies]
 async-trait = "0.1"
@@ -86,9 +97,8 @@ async-trait = "0.1"
 # `configure_test_binary_dispatch` before any test, which installs the arg0
 # aliases and hands back the helper's path.
 #
-# Dev-only on purpose. The shipped app dispatches only the argv[1] helpers
-# (`src/helper.rs`), not the Linux sandbox's arg0 alias, so giving it a Linux
-# helper path would be a lie about what the binary does.
+# The app has its own helper now (`src/linux_sandbox.rs`); the tests still use
+# the test binary, because the helper has to be the binary that is running.
 atlas-engine-sandboxing = { workspace = true }
 atlas-engine-test-binary-support = { workspace = true }
 # Pinned by the workspace to the same version `atlas-engine-core`'s tests use, so this

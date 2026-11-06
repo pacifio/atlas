@@ -33,7 +33,7 @@ import { useProjectStore } from "@/features/projects/stores/project-store";
 import { projectIdForTab } from "@/features/chat/lib/tab-project";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { isWindowFocused, lastInteraction } from "@/lib/window-focus";
-import type { TerminalEvent, TerminalEventSink } from "./block-parser";
+import type { TerminalEvent, TerminalEventSink } from "./shell-integration";
 import { collectPanes, findTerminal, useTerminalStore } from "../stores/terminal-store";
 import { decideTerminalNotification, type TerminalCtx } from "./terminal-notifier-rules";
 

@@ -1,8 +1,8 @@
 /**
  * Ownership of the pixi `Application` instances Atlas keeps alive at once.
  *
- * Atlas runs TWO independent pixi Applications — `knowledge-graph.tsx` and
- * `memory-graph-canvas.tsx` — and both are routinely mounted together: the
+ * Atlas runs TWO independent pixi Applications — `knowledge-graph-canvas.tsx` and
+ * `memory-graph-canvas-view.tsx` — and both are routinely mounted together: the
  * Knowledge Graph tab is a persistent module (`display:none` when hidden, see
  * `center-panel.tsx`), so opening the Memory tab in graph mode puts a second
  * WebGL context on the page without taking the first one down.

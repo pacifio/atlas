@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { File as FileGlyph, Folder } from "lucide-react";
+import { Icon } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import {
   ICON_PREVIEW_ROW,
@@ -19,11 +20,15 @@ import type { IconAppearance, IconKind } from "../lib/icon-theme-api";
  * draws the lucide icon the row would have had, which is what the app does.
  */
 
+/** A theme icon's cell edge in px: the package `Icon`'s `lg` step, so a
+ *  theme's icon and the lucide fallback line up. Inline rather than `size-4`,
+ *  which is rem-based and would drift from it with the root font size. */
 const SIZE = 16;
 
 function Fallback({ kind }: { kind: IconKind }) {
-  const Glyph = kind === "file" ? FileGlyph : Folder;
-  return <Glyph size={SIZE} className="shrink-0 text-muted-foreground" />;
+  return (
+    <Icon icon={kind === "file" ? FileGlyph : Folder} size="lg" className="text-muted-foreground" />
+  );
 }
 
 function Cell({ icon, kind }: { icon: PreviewIcon; kind: IconKind }) {

@@ -3,7 +3,7 @@
 //! (`timeFormat`, handed to `lib/format-time.ts`).
 //!
 //! Each one is written onto `<html>` as a custom property or a data attribute,
-//! and the stylesheets read it (`tokens.css`, `globals.css`). Nothing here
+//! and the stylesheets read it (`globals.css`). Nothing here
 //! re-renders React, so a change recolours or reflows at once, and every
 //! surface that styles itself through those rules follows without being told.
 //! The terminal's xterm (the alt screen) is the exception: it takes its font
@@ -22,7 +22,7 @@ export type DisplaySettings = Pick<
   | "editorFontSize"
   | "terminalFontSize"
   | "chatWidth"
-  | "chatCodeWrap"
+  | "wordWrap"
   | "diffPalette"
   | "timeFormat"
 >;
@@ -48,7 +48,7 @@ export function applyDisplaySettings(settings: DisplaySettings, root = document.
   root.style.setProperty("--atlas-editor-font-size", `${settings.editorFontSize}px`);
   root.style.setProperty("--atlas-terminal-font-size", `${settings.terminalFontSize}px`);
   root.dataset.chatWidth = settings.chatWidth;
-  root.dataset.chatCodeWrap = settings.chatCodeWrap ? "on" : "off";
+  root.dataset.wordWrap = settings.wordWrap ? "on" : "off";
   root.dataset.diffPalette = settings.diffPalette;
   setTimeFormat(settings.timeFormat);
   window.dispatchEvent(new CustomEvent(DISPLAY_SETTINGS_APPLIED));
@@ -84,7 +84,7 @@ export function displaySettingsChanged(next: AppSettings, previous: AppSettings)
     next.editorFontSize !== previous.editorFontSize ||
     next.terminalFontSize !== previous.terminalFontSize ||
     next.chatWidth !== previous.chatWidth ||
-    next.chatCodeWrap !== previous.chatCodeWrap ||
+    next.wordWrap !== previous.wordWrap ||
     next.diffPalette !== previous.diffPalette ||
     next.timeFormat !== previous.timeFormat
   );

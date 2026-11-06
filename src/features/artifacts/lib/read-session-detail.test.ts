@@ -73,3 +73,79 @@ describe("readSessionDetail", () => {
     ).rejects.toThrow("not found");
   });
 });
+
+describe("readSessionDetail, streamed", () => {
+  const remoteOnly = { sessionId: "ses_s", projectPath: "", remoteProjectId: "ws_1" };
+  const entry = (id: string) => ({ id }) as SessionDetail["entries"][number];
+  const withEntries = (ids: string[]): SessionDetail => ({
+    ...detail("ses_s"),
+    entries: ids.map(entry),
+  });
+
+  it("hands each page over as a growing prefix, then resolves with the whole Session", async () => {
+    const io = sources({
+      stream: vi.fn(async (_p, _s, onChunk) => {
+        onChunk({ kind: "page", detail: withEntries(["a", "b"]), done: false });
+        onChunk({ kind: "page", detail: withEntries(["c"]), done: true });
+      }),
+    });
+    const seen: [string[], boolean][] = [];
+    const out = await readSessionDetail(remoteOnly, io, (d, complete) =>
+      seen.push([d.entries.map((e) => e.id), complete]),
+    );
+    expect(seen).toEqual([
+      [["a", "b"], false],
+      [["a", "b", "c"], true],
+    ]);
+    expect(out?.entries.map((e) => e.id)).toEqual(["a", "b", "c"]);
+    expect(io.remote).not.toHaveBeenCalled();
+  });
+
+  it("shows the disk copy at once and keeps it when the server says it is current", async () => {
+    const io = sources({
+      stream: vi.fn(async (_p, _s, onChunk) => {
+        onChunk({ kind: "cached", detail: withEntries(["a", "b"]) });
+        onChunk({ kind: "unchanged" });
+      }),
+    });
+    const progress = vi.fn();
+    const out = await readSessionDetail(remoteOnly, io, progress);
+    expect(progress).toHaveBeenCalledTimes(1);
+    expect(progress).toHaveBeenCalledWith(
+      expect.objectContaining({ entries: [entry("a"), entry("b")] }),
+      true,
+    );
+    expect(out?.entries.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("never swaps a disk copy for a prefix of the newer read", async () => {
+    const io = sources({
+      stream: vi.fn(async (_p, _s, onChunk) => {
+        onChunk({ kind: "cached", detail: withEntries(["a"]) });
+        onChunk({ kind: "page", detail: withEntries(["a", "b"]), done: false });
+        onChunk({ kind: "page", detail: withEntries(["c"]), done: true });
+      }),
+    });
+    const progress = vi.fn();
+    const out = await readSessionDetail(remoteOnly, io, progress);
+    // Only the disk copy was shown; the newer Session arrives whole, at the end.
+    expect(progress).toHaveBeenCalledTimes(1);
+    expect(out?.entries.map((e) => e.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("rejects a read Rust stopped part-way, rather than passing a prefix off as the Session", async () => {
+    const io = sources({
+      stream: vi.fn(async (_p, _s, onChunk) => {
+        onChunk({ kind: "page", detail: withEntries(["a"]), done: false });
+      }),
+    });
+    await expect(readSessionDetail(remoteOnly, io, vi.fn())).rejects.toThrow(/superseded/);
+  });
+
+  it("reads whole, as before, when no one is listening for progress", async () => {
+    const io = sources({ stream: vi.fn() });
+    await readSessionDetail(remoteOnly, io);
+    expect(io.stream).not.toHaveBeenCalled();
+    expect(io.remote).toHaveBeenCalledWith("ws_1", "ses_s");
+  });
+});

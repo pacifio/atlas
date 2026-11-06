@@ -1,6 +1,6 @@
 // "Scroll this diff tab to that file" — from outside the tab.
 //
-// The thread overview asks for a file in a changes tab that may already be on
+// The Details card's Changes section asks for a file in a changes tab that may already be on
 // screen or may only be mounting now (a fresh split). A request waits here
 // until the tab's view takes it, so both cases are one path, and a view that is
 // already mounted is told immediately. Not tab data: a tab's data is what it

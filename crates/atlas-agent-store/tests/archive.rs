@@ -712,8 +712,11 @@ async fn refuses_a_zip_that_understates_its_own_size() {
     .await
     .unwrap_err();
 
+    // Either our ceiling ("expands …") or, since zip 9, the reader itself
+    // ("larger than its declared uncompressed size") refuses it.
+    let message = format!("{error:#}");
     assert!(
-        format!("{error:#}").contains("expands"),
+        message.contains("expands") || message.contains("larger than its declared"),
         "unexpected error: {error:#}"
     );
     assert!(!destination.exists(), "a zip bomb installed anyway");

@@ -3,11 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { createSelectors } from "@/lib/create-selectors";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { logEvent } from "@/features/log/lib/log";
-import {
-  useProjectStore,
-  type Project,
-  type ProjectGroup,
-} from "@/features/projects/stores/project-store";
+import { useProjectStore, type Project } from "@/features/projects/stores/project-store";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import {
   fromOrganisationWire,
@@ -53,7 +49,6 @@ export interface AppStateWire {
   currentProject: ProjectRef | null;
   recentProjects: RecentProject[];
   workspaces?: Project[];
-  groups?: ProjectGroup[];
   activeWorkspaceId?: string | null;
   /** The Organisation layer above projects (v3). `OrganisationWire`, not
    *  `Organisation`: the per-org active project is a frozen storage key too
@@ -105,7 +100,6 @@ interface AppStatePatchWire {
   recentProjects: RecentProject[];
   /** Storage keys — see `AppStateWire`. The values are projects. */
   workspaces: Project[];
-  groups: ProjectGroup[];
   activeWorkspaceId: string | null;
   /** Storage keys again, one level down: each org's last-active project rides
    *  as `activeWorkspaceId`. See `OrganisationWire`. */
@@ -115,7 +109,7 @@ interface AppStatePatchWire {
 
 // Debounced persistence: the Rust `save_app_state` command takes the
 // projects/recents/orgs slice of `AppState`. Both `useAppStore`
-// (recents) and `useProjectStore` (projects/groups/activeProjectId)
+// (recents) and `useProjectStore` (projects/activeProjectId)
 // contribute to it, so the save reads from both stores at flush time.
 // Coalesced to ~500ms.
 /** Build the `AppStatePatch` payload from every contributing store. Shared by
@@ -128,7 +122,6 @@ function buildAppStatePayload(): AppStatePatchWire {
     currentProject: null,
     recentProjects: app.recentProjects,
     workspaces: ws.projects,
-    groups: ws.groups,
     activeWorkspaceId: ws.activeProjectId,
     organisations: org.organisations.map(toOrganisationWire),
     activeOrganisationId: org.activeOrganisationId,
@@ -266,13 +259,14 @@ export async function loadProjectStores(path: string): Promise<void> {
   //
   // The stores load through `import()` on purpose: this file is in the BOOT
   // chunk (app hydration runs before first paint), and its static imports
-  // dragged the git/knowledge/session/explorer stores — ~340KB of app code —
+  // dragged the git/knowledge/session stores — hundreds of KB of app code —
   // into that chunk. Nothing here runs before a project opens, so the chunks
   // can arrive when a project does. All of them are prefetched by the time a
   // human clicks anything; the split is for cold boot, not for these calls.
-  void import("@/features/explorer/stores/explorer-store")
-    .then((m) => m.useExplorerStore.getState().actions.openFolder(path))
-    .catch((e) => console.error("Explorer failed:", e));
+  //
+  // The project tree is not loaded here: each tree loads its root when it
+  // mounts (`ProjectFileTree`), and is kept per root, so a switch needs
+  // nothing from it.
   void import("@/features/git/stores/git-store")
     .then((m) => m.useGitStore.getState().actions.loadStatus(path))
     .catch((e) => console.error("Git failed:", e));
@@ -408,13 +402,8 @@ export const useAppStore = createSelectors(
         // below, so the switch is a genuine null→id transition that actually
         // runs the loaders (a same-id switch is a no-op by design).
         const projects = payload.workspaces ?? [];
-        const groups = payload.groups ?? [];
         const activeProjectId = payload.activeWorkspaceId ?? null;
-        useProjectStore.getState().actions.hydrate({
-          projects,
-          groups,
-          activeProjectId: null,
-        });
+        useProjectStore.getState().actions.hydrate({ projects, activeProjectId: null });
 
         // Restore the active project, if any. `switchTo` sets
         // `currentProject` (which drives the App-level Rust lifecycle effects)
@@ -425,7 +414,14 @@ export const useAppStore = createSelectors(
         // flight (the `switching` guard), so auto-switching here would swallow
         // the CLI switch and strand the user on the persisted project. The
         // caller switches to the CLI project instead.
-        const active = activeProjectId && projects.find((w) => w.id === activeProjectId);
+        //
+        // Only a project of the active org: state saved before `closeProject`
+        // was org-scoped can pair one org with another org's project, which
+        // that org's switcher never shows.
+        const orgId = useOrgStore.getState().activeOrganisationId;
+        const active =
+          activeProjectId &&
+          projects.find((w) => w.id === activeProjectId && orgId != null && w.orgId === orgId);
         if (active && !opts?.skipActiveSwitch) {
           maybeEnsureAtlasGitignore(active.path, useSettingsStore.getState().settings);
           void useProjectStore.getState().actions.switchTo(active.id);

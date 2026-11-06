@@ -63,7 +63,8 @@ import {
   UZAYER_AVATAR_JPEG_BASE64,
   ZUHAYER_AVATAR_JPEG_BASE64,
 } from "../fixtures/northwind-avatars";
-import type { MockResponses, TypedHandlers } from "../types";
+import { appState, MOCK_ORG_ID } from "../project";
+import type { MockResponses, Scenario, TypedHandlers } from "../types";
 import type {
   ChannelKey,
   ChatMessageContent,
@@ -99,7 +100,6 @@ const DAY = 24 * 60 * MIN;
 
 /** Rust's `Err(String)`: callers branch on a bare string, never an Error. */
 function fail(message: string): never {
-  // oxlint-disable-next-line no-throw-literal -- Rust's `Err(String)`, not an Error.
   throw message;
 }
 
@@ -1088,3 +1088,88 @@ export async function zuhayerDraftEdit(
   }
   return undefined;
 }
+
+// ── Team chat actions for any scenario ────────────────────────────────────
+//
+// The one home for comms console actions (`__atlasMock.actions.<name>()`)
+// that are not part of a Northwind take: sibling comms work adds to this
+// section rather than inventing an equivalent elsewhere.
+
+/** Bring team chat on screen — ⌘⇧C's reveal half: when it is already showing,
+ *  in either form, it stays, rather than being toggled away. */
+export async function openTeamChat(): Promise<void> {
+  const { useLayoutStore } = await import("@/features/layout/stores/layout-store");
+  const { revealTeamChat, teamChatShown } = await import("@/features/layout/lib/team-chat");
+  if (!teamChatShown(useLayoutStore.getState())) revealTeamChat();
+}
+
+/** The default world with its organisation local-only (sync off, no remote
+ *  org): team chat's "not connected" screen. Not named "Acme": the signed-in
+ *  account's server org is, and a same-named local org is adopted by it. */
+export const commsNotConnected: Scenario = {
+  name: "comms-not-connected",
+  description: "Team chat for an organisation that has not turned sync on.",
+  rawCommands: {
+    bootstrap_app_state: () =>
+      appState({
+        organisations: [
+          { id: MOCK_ORG_ID, name: "Acme Labs", slug: "acme-labs", syncEnabled: false },
+        ],
+      }),
+  },
+  setup: openTeamChat,
+  actions: { openTeamChat },
+};
+
+/** Team chat for a synced organisation whose socket has delivered nothing yet,
+ *  held at one connection state: the panel's loading body (the skeleton) or its
+ *  terminal one ("Chat is unavailable"). No conversations, so the panel never
+ *  leaves that state; "Try again" is answered and changes nothing. */
+function commsHeld(
+  name: string,
+  description: string,
+  state: ConnectionInfo["state"],
+  reason: ConnectionInfo["reason"],
+): Scenario {
+  const held: ConnectionInfo = { state, reason, epoch: 1, orgId: MOCK_ORG_ID };
+  return {
+    name,
+    description,
+    commands: {
+      comms_status: () => held,
+      comms_snapshot: () => ({
+        connection: held,
+        me: "usr_dev",
+        conversations: [],
+        discoverable: [],
+        reads: [],
+        online: [],
+        calls: [],
+      }),
+      // Rust's boot announcement, at the held state rather than the
+      // default world's `open`.
+      comms_ready: () => {
+        const ev: CommsEvent = { kind: "connection", state, reason, retry_at_ms: null };
+        void emit("atlas:comms", { org: MOCK_ORG_ID, epoch: held.epoch, ev });
+        return null;
+      },
+      comms_reconnect: () => null,
+    },
+    setup: openTeamChat,
+    actions: { openTeamChat },
+  };
+}
+
+export const commsConnecting = commsHeld(
+  "comms-connecting",
+  "Team chat while the socket is still connecting, before any data: the skeleton.",
+  "connecting",
+  null,
+);
+
+export const commsUnavailable = commsHeld(
+  "comms-unavailable",
+  "Team chat after the server refused the account (not a member): the terminal state.",
+  "unavailable",
+  "not_a_member",
+);

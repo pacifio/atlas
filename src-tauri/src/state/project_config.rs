@@ -40,7 +40,7 @@ use super::atlas_config::{
 
 pub const PROJECT_CONFIG_FILE: &str = "config.toml";
 
-const PROJECT_CONFIG_HEADER: &str = "\
+pub(crate) const PROJECT_CONFIG_HEADER: &str = "\
 # Atlas settings for this project.
 #
 # Keys here override your global config.toml while this project is open.

@@ -1,28 +1,23 @@
-import { Popover } from "@base-ui/react/popover";
 import { Copy, Download, FileText, FileType2, Image as ImageIcon, RefreshCw } from "lucide-react";
+import { HintItem, Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@tryatlas/design";
 import { cn } from "@/lib/utils";
-import { HintItem } from "@/ui/hint-group";
 import { DockButton, DOCK_TRIGGER, HeaderDock } from "@/features/artifacts/components/header-dock";
 import type { DateRange } from "../types";
 import { DateRangeControl } from "./date-range-control";
+import { DestinationActions } from "@/features/layout/components/destination-actions";
 
 export type ExportKind = "pdf" | "jpeg" | "markdown" | "copy-markdown";
 
 /**
- * The Usage header: what window you are looking through, and the two actions
- * on the page.
+ * The Usage controls: what window you are looking through, and the two
+ * actions on the page. They sit in the destination bar (ADR-0024), which
+ * already says "Usage" and the organization, so there is no title row of
+ * their own repeating it.
  *
- * Built to the Timeline's bar rather than its own thing — a name on the left,
- * one round-ended track for the setting, one icon dock on the right. What it
- * replaced drew five bordered boxes across two rows (presets, custom, export,
- * and a label-plus-box for each of group and metric) plus an app icon, which
- * is a lot of chrome to say "last 30 days".
- *
- * No Atlas mark: a tab inside the app does not need to say which app it is,
- * and it was the only icon in a bar whose other glyphs all do something.
+ * One round-ended track for the setting, one icon dock: what this replaced
+ * drew five bordered boxes across two rows to say "last 30 days".
  */
 export function UsageHeader({
-  orgName,
   range,
   onRange,
   earliest,
@@ -30,9 +25,7 @@ export function UsageHeader({
   onRefresh,
   loading,
   canExport,
-  inset,
 }: {
-  orgName: string | null;
   range: DateRange;
   onRange: (r: DateRange) => void;
   earliest: string | null;
@@ -40,22 +33,10 @@ export function UsageHeader({
   onRefresh: () => void;
   loading: boolean;
   canExport: boolean;
-  /** The card's inset, so the bar's ends line up with the body below it. */
-  inset: number;
 }) {
   return (
-    <div
-      className="flex h-control-lg shrink-0 items-center gap-2"
-      style={{ paddingInline: inset + 6 }}
-    >
-      <span className="shrink-0 text-sm font-semibold text-[var(--foreground)]">Usage</span>
-      {orgName && (
-        <span className="min-w-0 truncate text-xs text-[var(--muted-foreground)]" title={orgName}>
-          {orgName}
-        </span>
-      )}
-
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+    <DestinationActions>
+      <div className="flex shrink-0 items-center gap-2">
         <DateRangeControl range={range} onChange={onRange} earliest={earliest} />
         {/* No `HintGroup` of its own: `HeaderDock` already is one, and nesting
             a second group gives the dock two sliding tooltips racing the same
@@ -67,7 +48,7 @@ export function UsageHeader({
           </DockButton>
         </HeaderDock>
       </div>
-    </div>
+    </DestinationActions>
   );
 }
 
@@ -87,47 +68,57 @@ function ExportMenu({
   disabled: boolean;
 }) {
   return (
-    <Popover.Root>
+    <Popover>
       <HintItem label="Export usage">
-        <Popover.Trigger
+        <PopoverTrigger
           render={
-            <button
-              type="button"
-              disabled={disabled}
-              className={cn(DOCK_TRIGGER, "disabled:opacity-40")}
-            >
+            <DockMenuButton disabled={disabled}>
               <Download size={12} strokeWidth={1.7} />
-            </button>
+            </DockMenuButton>
           }
         />
       </HintItem>
-      <Popover.Portal>
-        {/* z-index belongs to the Positioner — the Popup is static inside it.
-            `--transform-origin` is Base UI's spelling of Radix's
-            `--radix-popover-content-transform-origin`. */}
-        <Popover.Positioner className="z-popover" align="end" sideOffset={6}>
-          <Popover.Popup className="w-[196px] origin-[var(--transform-origin)] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--card)]/90 p-1 shadow-md backdrop-blur-2xl data-closed:animate-scale-out data-open:animate-scale-in">
-            {ITEMS.map((item) => (
-              <Popover.Close
-                key={item.kind}
-                render={
-                  <button
-                    type="button"
-                    onClick={() => onExport(item.kind)}
-                    className="flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--secondary-foreground)] outline-none transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
-                  >
-                    <item.icon size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                    <span className="shrink-0 text-2xs text-[var(--atlas-text-disabled)]">
-                      {item.hint}
-                    </span>
-                  </button>
-                }
-              />
-            ))}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+      {/* Plain buttons that close the popover, reached with Tab: a menu
+          (arrow keys, typeahead, menuitem roles) would be a behaviour change. */}
+      <PopoverContent align="end" sideOffset={6} className="w-[196px] p-1">
+        {ITEMS.map((item) => (
+          <PopoverClose
+            key={item.kind}
+            render={
+              <ExportRow onClick={() => onExport(item.kind)}>
+                <item.icon size={12} className="shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                <span className="shrink-0 text-2xs text-disabled">{item.hint}</span>
+              </ExportRow>
+            }
+          />
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The dock glyph that opens the export popover; dims while there is nothing to export. */
+function DockMenuButton({ className, ...props }: React.ComponentProps<"button">) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(DOCK_TRIGGER, "disabled:opacity-40", className)}
+    />
+  );
+}
+
+/** One export row: icon, label, and the file kind it produces. */
+function ExportRow({ className, ...props }: React.ComponentProps<"button">) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        "flex h-control-md w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs text-secondary-foreground transition-colors hover:bg-element-hover hover:text-foreground",
+        className,
+      )}
+    />
   );
 }

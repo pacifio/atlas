@@ -5,4 +5,4 @@
 /**
  * Successful response for `fs/copy`.
  */
-export type FsCopyResponse = Record<string, never>;
+export type FsCopyResponse = Record<symbol, never>;

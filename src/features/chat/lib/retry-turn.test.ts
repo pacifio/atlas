@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The action reaches IPC, toasts and the log store; none of that is what is
 // under test. What IS under test is the ordering around the destructive call.
 const rewindLastTurn = vi.fn<(key: unknown) => Promise<string | null>>();
-const send = vi.fn<() => Promise<void>>();
+const send = vi.fn<(key: unknown, prompt: string) => Promise<void>>();
+const queueAdd = vi.fn(async () => "q-1");
 const enqueueMessage = vi.fn();
 const addMessage = vi.fn();
 const updateSessionStatus = vi.fn();
@@ -14,8 +15,12 @@ let subscriber: (() => void) | undefined;
 vi.mock("./agents-api", () => ({
   agents: {
     rewindLastTurn: (key: unknown) => rewindLastTurn(key),
-    send: () => send(),
+    send: (key: unknown, prompt: string) => send(key, prompt),
+    queueAdd: (...args: unknown[]) => queueAdd(...(args as [])),
   },
+}));
+vi.mock("@/features/settings/stores/settings-store", () => ({
+  useSettingsStore: { getState: () => ({ settings: { adaptiveSuggestions: "off" } }) },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock("@/features/log/lib/log", () => ({ logEvent: vi.fn() }));
@@ -26,7 +31,7 @@ vi.mock("../stores/chat-store", () => ({
   useChatStore: {
     getState: () => ({
       sessions: { tab: session },
-      actions: { addMessage, updateSessionStatus, enqueueMessage },
+      actions: { addMessage, updateSessionStatus, enqueueMessage, setQueueItemId: vi.fn() },
     }),
     subscribe: (cb: () => void) => {
       subscriber = cb;
@@ -38,6 +43,7 @@ vi.mock("../stores/chat-store", () => ({
 }));
 
 const { retryLastTurn } = await import("./retry-turn");
+const { collapsePastes, pastedTextMention, withPastesInline } = await import("./pasted-text");
 
 /**
  * Let the store's truncation become observable, as the real delta would:
@@ -71,6 +77,37 @@ beforeEach(() => {
 });
 
 describe("retrying the last turn", () => {
+  // The native agent hands back the turn's prompt as the blocks it sent, a
+  // blank line apart (`UserMessage::prompt_text`): a large paste rode as a
+  // text block, so it comes back whole, in the form the queue writes.
+  const paste = pastedTextMention(Array.from({ length: 120 }, (_, i) => `log ${i}`).join("\n"));
+  const withPaste = withPastesInline(`summarise @paste:${paste.id}`, [paste]);
+
+  it("re-sends a turn's large paste in full", async () => {
+    rewindLastTurn.mockResolvedValue(withPaste);
+    send.mockResolvedValue(undefined);
+    const run = retryLastTurn("tab");
+    deliverRewindDelta();
+    await run;
+    expect(send).toHaveBeenCalledWith(expect.anything(), withPaste);
+    expect(send.mock.calls[0][1]).toContain("log 119");
+  });
+
+  it("hands a prompt with a paste back in a form the composer collapses to its chip", async () => {
+    vi.useFakeTimers();
+    rewindLastTurn.mockResolvedValue(withPaste);
+    const run = retryLastTurn("tab");
+    await vi.advanceTimersByTimeAsync(4_000);
+    await run;
+    vi.useRealTimers();
+    expect(send).not.toHaveBeenCalled();
+    const queued = enqueueMessage.mock.calls[0][1] as string;
+    expect(collapsePastes(queued)).toEqual({
+      text: `summarise @paste:${paste.id}`,
+      pastes: [paste],
+    });
+  });
+
   it("rewinds once when clicked twice in a row", async () => {
     // The status gate cannot catch this: `updateSessionStatus("running")` only
     // runs AFTER the rewind resolves, so between the two clicks the session
@@ -138,7 +175,19 @@ describe("retrying the last turn", () => {
     vi.useRealTimers();
 
     expect(send).not.toHaveBeenCalled();
-    expect(enqueueMessage).toHaveBeenCalledWith("tab", "hello");
+    // Handed back to the session's queue — in Rust, which owns it now; the
+    // strip shows it at once, marked pending until `queue_changed` confirms.
+    expect(enqueueMessage).toHaveBeenCalledWith(
+      "tab",
+      "hello",
+      [],
+      expect.stringMatching(/^pending:/),
+    );
+    expect(queueAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: expect.any(String) }),
+      "hello",
+      "hello",
+    );
   });
 
   it("does not send into a session the tab switched to mid-rewind", async () => {
@@ -154,7 +203,18 @@ describe("retrying the last turn", () => {
     await run;
 
     expect(send).not.toHaveBeenCalled();
-    expect(enqueueMessage).toHaveBeenCalledWith("tab", "hello");
+    expect(enqueueMessage).toHaveBeenCalledWith(
+      "tab",
+      "hello",
+      [],
+      expect.stringMatching(/^pending:/),
+    );
+    // Into the session the tab is on NOW: the hand-back is for the user.
+    expect(queueAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: "a-different-session" }),
+      "hello",
+      "hello",
+    );
   });
 
   it("sends nothing and enqueues nothing when there was no turn to rewind", async () => {

@@ -3,18 +3,6 @@ import { AlertTriangle, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { KbdKeys } from "@/ui/kbd";
-import { Hint } from "@/ui/tooltip";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
 import { ACTION_BY_ID, type ActionId } from "../lib/actions";
 import {
   type Combo,
@@ -30,6 +18,18 @@ import { bindingsForCombo, type Conflict } from "../lib/resolve";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { defaultWhenExpression, neverMatches, parseWhen, whenToExpression } from "../lib/when";
 import { WhenClauseControl } from "./when-clause-control";
+import {
+  Icon,
+  IconButton,
+  KbdKeys,
+  Hint,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@tryatlas/design";
 
 /** Which of a row's shortcuts is being recorded: an index into its bindings,
  *  or "add" for a new one next to them. */
@@ -325,7 +325,7 @@ function ShortcutCapture({
     };
     // `save` reads the store fresh on every call; re-subscribing per render
     // would drop a keydown that lands between two effects.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [actionId, replace]);
 
   const save = (combo: Combo) => {

@@ -22,13 +22,9 @@
         "transparent": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
+        "trafficLightPosition": { "x": 16, "y": 16 },
         "acceptFirstMouse": true,
-        "backgroundColor": [
-          0,
-          0,
-          0,
-          255
-        ]
+        "backgroundColor": [0, 0, 0, 255]
       }
     ],
     "security": {
@@ -37,9 +33,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": {
-          "allow": [
-            "$HOME/**"
-          ],
+          "allow": ["$HOME/**", "$APPCONFIG/**", "$APPCACHE/**"],
           "deny": []
         }
       },
@@ -49,10 +43,7 @@
   "plugins": {},
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg"
-    ],
+    "targets": ["app", "dmg"],
     "resources": {
       "resources/nvm.sh": "resources/nvm.sh",
       "licenses/Atlas-LICENSE.txt": "licenses/Atlas-LICENSE.txt",
@@ -63,7 +54,7 @@
     "category": "DeveloperTool",
     "shortDescription": "Atlas \u2014 agent-first ideation and planning tool",
     "longDescription": "Atlas is a Tauri-based desktop app that hosts ACP-compatible coding agents (Claude Code, Codex, OpenCode) with first-class file, knowledge, and research integration.",
-    "copyright": "https://tryatlas.cc/ Report bugs to Github: https://github.com/pacifio/atlas/issues/",
+    "copyright": "https://tryatlas.cc/ Report bugs to Github: https://github.com/tryatlas/atlas/issues/",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

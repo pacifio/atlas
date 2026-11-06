@@ -26,8 +26,10 @@ const dirOfPath = (p: string): string => {
 export function useExternalFileDrop(opts: {
   rootPath: string | null;
   onDropFiles: (paths: string[], destDir: string) => void;
+  /** This tree's own container: a drop over another tree is not ours. */
+  scopeRef?: React.RefObject<HTMLElement | null>;
 }) {
-  const { rootPath, onDropFiles } = opts;
+  const { rootPath, onDropFiles, scopeRef } = opts;
   const [dropPath, setDropPath] = useState<string | null>(null);
 
   useEffect(() => {
@@ -42,11 +44,15 @@ export function useExternalFileDrop(opts: {
       const p = dragPositionToCss(position);
       const el = document.elementFromPoint(p.x, p.y);
       if (!el) return null;
-      const rowEl = el.closest<HTMLElement>("[data-tree-path]");
+      const scope = scopeRef?.current;
+      if (scope && !scope.contains(el)) return null;
+      // A folder name inside a compacted row is a drop target of its own.
+      const segment = el.closest<HTMLElement>("[data-tree-drop-path]");
+      const rowEl = segment ?? el.closest<HTMLElement>("[data-tree-path]");
       if (rowEl) {
-        const path = rowEl.getAttribute("data-tree-path");
+        const path = rowEl.getAttribute(segment ? "data-tree-drop-path" : "data-tree-path");
         if (!path) return null;
-        const isDir = rowEl.getAttribute("data-tree-is-dir") === "true";
+        const isDir = !!segment || rowEl.getAttribute("data-tree-is-dir") === "true";
         if (isDir) return path;
         const parent = dirOfPath(path);
         return parent === rootPath ? ROOT_DROP : parent;
@@ -82,7 +88,7 @@ export function useExternalFileDrop(opts: {
       unlisten?.();
       setDropPath(null);
     };
-  }, [rootPath, onDropFiles]);
+  }, [rootPath, onDropFiles, scopeRef]);
 
   return { externalDropPath: dropPath };
 }

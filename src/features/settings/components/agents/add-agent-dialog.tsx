@@ -1,16 +1,11 @@
 // The Add agent dialog: the ACP registry's agents that aren't added yet,
 // searchable, one row each with Install. What the old full-page marketplace
-// grid was, now behind the Agents page's + button, like T3 Code's Add provider.
+// grid was, now behind the Agents page's + button.
 
 import { useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/ui/dialog";
 import { AtlasLoader } from "@/components/atlas-loader";
-import { AgentMonogram, ExternalAgentIcon } from "@/components/agent-icons";
 import { TrendSparkline } from "@/components/trend-sparkline";
 import { downloadTrend, fmtDownloads } from "@/features/agents/lib/download-trends";
 import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-store";
@@ -25,6 +20,18 @@ import {
   useAgentListing,
   useInstalls,
 } from "./agent-install";
+import {
+  AgentMonogram,
+  Button,
+  ExternalAgentMark,
+  Icon,
+  Hint,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@tryatlas/design";
 
 const PAGE_SIZE = 20;
 
@@ -64,7 +71,7 @@ export function AddAgentDialog({
           (e.description ?? "").toLowerCase().includes(q)),
     );
     // `signature` moves whenever the arrays do; they are not stable refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, query, installs]);
 
   const install = async (entry: AcpRegistryEntry) => {
@@ -86,7 +93,7 @@ export function AddAgentDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[min(44rem,calc(100vh-4rem))] max-w-[min(44rem,calc(100vw-2rem))] gap-4">
+      <DialogContent size="lg" className="max-h-[min(44rem,calc(100vh-4rem))] gap-4">
         <DialogHeader className="mr-8">
           <DialogTitle>Add an agent</DialogTitle>
           <DialogDescription>
@@ -185,7 +192,7 @@ function OfferRow({
           `currentColor` art, so the tile decides whether they are legible. */}
       <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground">
         {entry.iconDataUrl ? (
-          <ExternalAgentIcon dataUrl={entry.iconDataUrl} size={16} />
+          <ExternalAgentMark dataUrl={entry.iconDataUrl} size={16} />
         ) : (
           <AgentMonogram label={entry.name} size={16} />
         )}

@@ -1,88 +1,37 @@
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { toast } from "sonner";
 
-import { DockButton, HeaderDock } from "./header-dock";
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { Segmented } from "@tryatlas/design";
+
+import { useLayoutStore, type TimelineView } from "@/features/layout/stores/layout-store";
 import { useOrgDirectory } from "@/features/organisations/lib/use-org-directory";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
+import { cn } from "@/lib/utils";
 
 import { useSessionComments } from "../lib/use-session-comments";
-import { useArtifactsStore, type OpenSession } from "../stores/artifacts-store";
-import type { BoardPage, BoardSession, SessionDetail as Detail } from "../types";
-import {
-  activeFacetCount,
-  facetMatches,
-  sessionState,
-  NO_FACETS,
-  type FacetSelection,
-} from "../lib/board";
-import { boardKey, rowForCheckout } from "../lib/board-key";
-import {
-  clearDetailCache,
-  invalidateCachedDetail,
-  readCachedDetail,
-  writeCachedDetail,
-} from "../lib/detail-cache";
-import { readSessionDetail } from "../lib/read-session-detail";
-import { ExportButton } from "./export-button";
+import { useArtifactsStore } from "../stores/artifacts-store";
+import type { BoardSession } from "../types";
+import { activeFacetCount, facetMatches, NO_FACETS, type FacetSelection } from "../lib/board";
+import { openKeyOf, useOpenSessionDetail } from "../lib/use-open-session-detail";
+import { useTimelineBoard } from "../lib/use-timeline-board";
 import { SessionChatPanel } from "./session-chat-panel";
 import { SessionDetail } from "./session-detail";
 import { BoardFilters } from "./board-filters";
 import { SessionReaderHeader } from "./session-reader";
 import { TimelineBoard } from "./timeline-board";
+import { TraceView } from "./trace-view";
 import { DetailSkeleton } from "./timeline-skeleton";
-
-/**
- * Is this re-read structurally the same Session we already have?
- *
- * Deliberately a *signature*, not a deep compare: the point is to avoid touching
- * a megabyte of objects, so walking them to decide would defeat itself. The
- * three fields below move whenever a Session gains anything — a message, a tool
- * call, a Checkpoint — which is the only way its timeline can change.
- */
-function sameDetail(a: Detail | null | undefined, b: Detail | null): boolean {
-  if (!a || !b) return false;
-  return (
-    a.summary.id === b.summary.id &&
-    a.summary.updatedAt === b.summary.updatedAt &&
-    a.entries.length === b.entries.length
-  );
-}
-
-/**
- * Same idea for the board list: cheap signature, not a deep compare. A session
- * only moves on the board when it gains activity (updatedAt) or rows
- * appear/disappear — first/last cover reordering since the read is sorted.
- */
-function sameBoard(a: BoardSession[], b: BoardSession[]): boolean {
-  if (a.length !== b.length) return false;
-  if (a.length === 0) return true;
-  // By board key, not id: a Session re-sent to another Project keeps its id,
-  // and a row that changed Project must still re-render.
-  const sig = (s: BoardSession) => `${boardKey(s)}|${s.updatedAt}`;
-  return (
-    sig(a[0]) === sig(b[0]) &&
-    sig(a[a.length - 1]) === sig(b[b.length - 1]) &&
-    a.every((s, i) => sig(s) === sig(b[i]))
-  );
-}
+import { NotEnabled, NotFound } from "./views/timeline-empty-states";
 
 /** The chat half of the split. Wide enough for a code block in an answer. */
 const CHAT_WIDTH = 420;
 
-/**
- * The card's inset from the tab's edges, in px.
- *
- * Measured against the project rail's card rather than chosen: side by side
- * with the switcher, 6px read as a visibly wider gutter on the Timeline. The
- * divider and the header row are both positioned against this constant, so the
- * three cannot drift apart.
- */
-const CARD_INSET = 4;
+/** The destination bar's view toggle. */
+const VIEWS: { value: TimelineView; label: string }[] = [
+  { value: "list", label: "List" },
+  { value: "trace", label: "Trace" },
+];
 
 /** Mirrors `BOARD_LIMIT` in `capture.rs` — how many rows one board read returns. */
 const BOARD_LIMIT = 500;
@@ -115,40 +64,8 @@ const BOARD_LIMIT = 500;
  *   actually visible.
  */
 
-/** The board row a Session was opened from, if it is still on the board. */
-function boardRowFor(sessions: BoardSession[], open: OpenSession): BoardSession | undefined {
-  const k = openKeyOf(open);
-  return sessions.find((s) => boardKey(s) === k);
-}
-
-/** The {@link boardKey} of the open Session — the same Session id can be on the
- *  board once per Project, so the id alone does not say which row is open. */
-function openKeyOf(open: OpenSession): string {
-  return boardKey({
-    id: open.sessionId,
-    projectPath: open.projectPath,
-    remoteProjectId: open.remoteProjectId ?? null,
-  });
-}
-
-/**
- * A Session with its summary but not yet its timeline.
- *
- * The board row already carries every field the masthead reads, so this costs
- * nothing and removes the whole round trip from the first paint. It is only
- * ever shown with `entriesPending`, which is what stops the empty `entries`
- * being read as "this Session recorded nothing".
- */
-function shellDetail(row: BoardSession): Detail {
-  return {
-    summary: row,
-    entries: [],
-    counts: { prompts: 0, responses: 0, thinking: 0, toolCalls: 0, checkpoints: 0 },
-    tools: [],
-  };
-}
-
 export function ArtifactsPanel() {
+  useTipOnMount("timeline");
   // Every project in the active Organisation, not just the open one: the board
   // answers "what has been happening in our code", which does not stop at the
   // folder that happens to be focused.
@@ -162,19 +79,6 @@ export function ArtifactsPanel() {
   // separator that can occur in a path would corrupt the round trip.
   const projectsKey = projectPaths.join("\n");
 
-  const [sessions, setSessions] = useState<BoardSession[]>([]);
-  /**
-   * The timeline is still arriving for the Session on screen.
-   *
-   * Distinct from `detail === undefined` (nothing to show yet) because the
-   * masthead is painted from the board row the instant it is clicked, ahead of
-   * the entries. Without this the shell's empty `entries` would render
-   * "Nothing was recorded in this session." — which is exactly what a Session
-   * with genuinely no rows says, and the two must not look alike.
-   */
-  const [entriesPending, setEntriesPending] = useState(false);
-  /** `undefined` while a detail read is in flight; `null` when not found. */
-  const [detail, setDetail] = useState<Detail | null | undefined>(undefined);
   // Held in the store, not here: this panel unmounts on every tab switch, and
   // neither the open Session nor the filter may be lost to that.
   const open = useArtifactsStore.use.open();
@@ -191,7 +95,9 @@ export function ArtifactsPanel() {
    *  is still wide next launch — `showSidebar` is the same two-state choice
    *  under its original name. */
   const wideByChoice = !useLayoutStore((s) => s.timelinePanel.showSidebar);
-  const { toggleTimelineSidebar } = useLayoutStore.use.actions();
+  const { toggleTimelineSidebar, setTimelineView } = useLayoutStore.use.actions();
+  /** List or Trace — kept with the panel's layout, so it survives a restart. */
+  const view = useLayoutStore((s) => s.timelinePanel.view);
   /** How wide the dock is, in pixels, so it can be animated.
    *
    *  A measured number rather than a CSS width: `width: auto` has nothing to
@@ -230,17 +136,15 @@ export function ArtifactsPanel() {
       }),
     [openSession],
   );
-  // A Session opened from outside the board — a commit's "Produced by" card,
-  // Atlas Agent's open action — names its checkout but not its server Project,
-  // and without that the Session reads as unshared: no comments, no link. The
-  // board row knows it, so take it from there once the board has it.
-  useEffect(() => {
-    if (!open || open.remoteProjectId !== undefined) return;
-    const row = rowForCheckout(sessions, open.sessionId, open.projectPath);
-    if (row) openSession({ ...open, remoteProjectId: row.remoteProjectId });
-  }, [open, sessions, openSession]);
-  /** True once the first board read has landed. */
-  const [loaded, setLoaded] = useState(false);
+  const { sessions, loaded, error, cloudPending } = useTimelineBoard({
+    open,
+    projectPaths,
+    projectsKey,
+    projectFilter,
+    activeOrganisationId,
+    openSession,
+    setProjectFilter,
+  });
   /** Board search. Lifted out of the list because the field lives in the header
    *  now. Local rather than in the store: unlike the open Session and the
    *  project filter, a search is a thing you are doing right now, and finding it
@@ -255,64 +159,6 @@ export function ArtifactsPanel() {
    *  is a real question about a team's work in a way that "these two agents"
    *  is not. */
   const [people, setPeople] = useState<(string | null)[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  /** Why the open Session could not be read. Scoped to its own pane — see the
-   *  `readDetail` catch. */
-  const [detailError, setDetailError] = useState<string | null>(null);
-  /**
-   * A synced Organisation's first server read has not landed.
-   *
-   * The board is local-first, so for a synced Organisation the first read comes
-   * back with nothing and `loaded` flips true — which rendered "No sessions
-   * captured yet" for the moment before the remote rows arrived. The local-only
-   * case never had this, because its first read is the whole answer.
-   */
-  const [cloudPending, setCloudPending] = useState(false);
-  /**
-   * Which Organisation we have already told the user about.
-   *
-   * The board re-reads on every capture and git event and on a fifteen-second
-   * ticker, and all of them carry the failure flag — so without this the notice
-   * would reappear every few seconds for as long as the connection is down.
-   * Cleared on an org switch and on a successful read, so a later failure is
-   * reported again.
-   */
-  const cloudFailureToldFor = useRef<string | null>(null);
-
-  const retryCloud = useCallback(() => {
-    void invoke<boolean>("artifacts_cloud_refresh")
-      .then((ok) => {
-        if (ok) toast.success("Cloud sessions loaded.");
-        // A failed retry re-arms the notice rather than raising a second one
-        // on top of the first — `refresh` below will report it again.
-        else cloudFailureToldFor.current = null;
-      })
-      .catch(() => {
-        cloudFailureToldFor.current = null;
-      })
-      .finally(() => void refreshRef.current?.());
-  }, []);
-
-  const reportCloudFailure = useCallback(
-    (failed: boolean, orgId: string | null) => {
-      if (!failed) {
-        cloudFailureToldFor.current = null;
-        return;
-      }
-      if (cloudFailureToldFor.current === orgId) return;
-      cloudFailureToldFor.current = orgId;
-      toast.error("Couldn't load this Organization's shared sessions.", {
-        id: "timeline-cloud-failed",
-        description: "Showing the sessions recorded on this machine.",
-        action: { label: "Retry", onClick: retryCloud },
-      });
-    },
-    [retryCloud],
-  );
-
-  /** `refresh` is defined below and the retry needs it; a ref keeps the two
-   *  from having to be declared in dependency order. */
-  const refreshRef = useRef<(() => void) | null>(null);
   /** Whether the grounded chat occupies the right half of the open Session.
    *  Local, and reset when the Session changes: a chat about the Session you
    *  just left is not a chat about the one you just opened. */
@@ -343,286 +189,43 @@ export function ArtifactsPanel() {
    */
   const dockWide = wideByChoice || chatOpen;
   /**
-   * The open panel's width, held through the close animation.
+   * The board is out of sight while the reader is wide — hidden, NOT unmounted.
    *
-   * Reading it from `sidePanel` directly would snap the aside to the other
-   * panel's width on the frame it closes, because `null` has no width of its
-   * own — the slide-out would jump before it moved.
+   * It used to unmount, so every Ask toggle and every widen/narrow tore down
+   * and rebuilt the virtualized board (rows, day headings, context meters):
+   * ~100–150ms of work on the click that closed the chat, plus the reader's
+   * place in the list lost each time. Hidden, it costs nothing to keep and
+   * comes back exactly where it was.
+   *
+   * Hidden by `visibility`, out of the flow, at the width it has beside the
+   * dock — NOT `display: none`. The board is virtualized, and under
+   * `display: none` every row measures 0px tall, so the virtualizer concludes
+   * the whole list fits and mounts all of it: a 2.5s freeze on a 400-row board.
+   * At its own width nothing it measures changes, so hiding it does no work.
    */
-  const lastPanelWidth = useRef(CHAT_WIDTH);
-  if (chatOpen) lastPanelWidth.current = CHAT_WIDTH;
-  const panelWidth = lastPanelWidth.current;
+  const boardHidden = Boolean(open) && dockWide;
 
+  /** The dock's width beside the board. Never more than most of the tab: the
+   *  board has to stay readable, or the split has stopped being one. */
+  const narrowDockWidth = Math.min(620, Math.round(mainWidth * 0.82));
   const dockWidth = useMemo(() => {
     if (mainWidth === 0) return 0;
     // Wide covers the chat too — opening it hides the board rather than
     // splitting the tab three ways.
     if (dockWide) return mainWidth;
-    // Never more than most of the tab: the board has to stay readable, or the
-    // split has stopped being one.
-    return Math.min(620, Math.round(mainWidth * 0.82));
-  }, [mainWidth, dockWide]);
-
-  /** Monotonic read sequence — only the newest read may write list state. */
-  const listSeq = useRef(0);
-  /** Same, for the detail read. */
-  const detailSeq = useRef(0);
-
-  // Switching Organisation closes whatever was open and drops the cache.
-  //
-  // The comment here used to *claim* the open Session was dropped. It was not,
-  // and that was the bug behind the red banner over the board: a Session from
-  // the previous tenant stayed open, its detail re-read against the new one,
-  // and a Project the new Organisation has never heard of came back as a
-  // failure. A Session belongs to the Organisation it was opened in.
-  //
-  // Keyed on a ref rather than firing on mount, because a Session opened from
-  // outside — the git panel's history, a Checkpoint — is set *before* this
-  // panel mounts, and clearing on the first run would close it again.
-  const lastOrg = useRef(activeOrganisationId);
-  useEffect(() => {
-    if (lastOrg.current === activeOrganisationId) return;
-    lastOrg.current = activeOrganisationId;
-    clearDetailCache();
-    openSession(null);
-    // A server Project belongs to the Organisation it was chosen in; kept, it
-    // would narrow the next tenant's board to nothing.
-    const filter = useArtifactsStore.getState().projectFilter;
-    if (filter && "remote" in filter) setProjectFilter(null);
-    setError(null);
-    // Back to the loading state rather than the previous tenant's rows. The
-    // refresh below repopulates; leaving them up means one Organisation's work
-    // is briefly on screen under another's name.
-    setSessions([]);
-    setLoaded(false);
-    setCloudPending(true);
-    // A new tenant gets its own notice if it also fails.
-    cloudFailureToldFor.current = null;
-    toast.dismiss("timeline-cloud-failed");
-  }, [activeOrganisationId, openSession, setProjectFilter]);
-
-  // A filter naming a project that is no longer open would hide everything with
-  // no way back, so it is dropped rather than left dangling.
-  useEffect(() => {
-    if (projectFilter && "local" in projectFilter && !projectPaths.includes(projectFilter.local))
-      setProjectFilter(null);
-  }, [projectFilter, projectPaths, setProjectFilter]);
-
-  const refresh = useCallback(async () => {
-    const seq = ++listSeq.current;
-    try {
-      // Filtering narrows the *query*, not the result. The board caps how many
-      // rows it returns, so filtering afterwards would show only this project's
-      // share of the newest few hundred; asking for one project reads its
-      // history whole.
-      const page = await invoke<BoardPage>("artifacts_board", {
-        projects: projectPaths,
-        // Explicit, not `[path]`: one open folder is not a filter, and a
-        // server Project with no checkout has no path to send.
-        filter: projectFilter,
-      });
-      if (seq !== listSeq.current) return; // a newer read owns the state now
-      const rows = page.sessions;
-      setCloudPending(page.cloudPending);
-      reportCloudFailure(page.cloudFailed, activeOrganisationId);
-      // Same-data bailout, the list-side sibling of `sameDetail`: the poll and
-      // the capture/git events re-read even when nothing changed, and an
-      // unconditional setSessions handed a fresh array identity to the memo'd
-      // grouping + all ~500 rows every 15 s. Signature over the fields that
-      // move when any row changes (ids + updatedAt at both ends + count).
-      setSessions((current) => (sameBoard(current, rows) ? current : rows));
-      setError(null);
-      setLoaded(true);
-    } catch (e) {
-      if (seq === listSeq.current) setError(String(e));
-    } finally {
-    }
-    // `projectsKey` stands in for `projectPaths`: same content, stable identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectsKey, projectFilter, reportCloudFailure, activeOrganisationId]);
-
-  // The retry needs `refresh` and is declared above it — see `refreshRef`.
-  refreshRef.current = refresh;
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Event-driven refresh, with a visible-only poll as the fallback for
-  // capture writes (turn finished, import progressed, drain sent rows) that
-  // move no git ref and therefore emit no event.
-  useEffect(() => {
-    // Two push signals, then the poll as a floor.
-    //
-    // `atlas:capture-changed` is the one that matters: the capture worker emits
-    // it (coalesced) whenever it writes, which is what makes a session you just
-    // started appear immediately rather than up to fifteen seconds later. It
-    // did not exist before, so the poll *was* the refresh — and capture writes
-    // move no git ref, so `atlas:git-changed` never fired for them.
-    //
-    // Any project's commit can add a Checkpoint to this board, so unlike the
-    // project-scoped view this no longer filters the git event by path.
-    const unlisten = Promise.all([
-      listen("atlas:git-changed", () => void refresh()),
-      listen("atlas:capture-changed", (e) => {
-        // A local write to one Session. Its cached timeline is now a snapshot
-        // of a Session that has since moved, and the cache is served
-        // SYNCHRONOUSLY on the next open — so a stale entry is a wrong panel,
-        // not a slow one.
-        // The recording worker names what it wrote (`CaptureChanged` in
-        // capture.rs); other emitters send nothing and only mean "re-read".
-        const changed = e.payload as { sessionIds?: string[]; all?: boolean } | null;
-        if (changed?.all) clearDetailCache();
-        else for (const id of changed?.sessionIds ?? []) invalidateCachedDetail(id);
-        void refresh();
-      }),
-      // The cloud half of the same story: a teammate's Session grew, or a
-      // resync says everything we hold may be behind.
-      listen("atlas:artifacts-cloud", (e) => {
-        const frame = e.payload as { kind?: string; sessionId?: string } | null;
-        if (!frame) return;
-        if (frame.kind === "entryUpsert" && frame.sessionId) {
-          invalidateCachedDetail(frame.sessionId);
-        } else if (frame.kind === "boardChanged") {
-          void refresh();
-        } else if (frame.kind === "resync") {
-          clearDetailCache();
-          void refresh();
-        }
-      }),
-    ]);
-
-    // Read once more as soon as the listeners are actually live.
-    //
-    // `listen` is a round trip: between this panel's first read and its
-    // subscription being registered there is a window, and an event emitted
-    // inside it reaches nobody. Rust fills the cloud half of the board in the
-    // background and emits exactly once when it lands — so losing that one
-    // event left every REMOTE Session off the board until something unrelated
-    // refreshed it, which is why the rows appeared the moment you opened a
-    // Session or touched a filter.
-    //
-    // Cheap, and idempotent: a board read that finds nothing new hits the
-    // `sameBoard` bailout and does not even re-render.
-    void unlisten.then(() => void refresh());
-    // No poll: the two events above cover every write path (they are why a
-    // fresh session appears immediately), and the visibility handler below
-    // catches anything that happened while the window was hidden. The 15s
-    // interval predated both and was pure redundancy by the time it died.
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      void unlisten.then((stops) => stops.forEach((stop) => stop()));
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [refresh]);
-
-  // Opening a Session reads its full timeline; the list row does not carry it.
-  // The read goes to the store of the project the row came from, which is not
-  // necessarily the Project currently open.
-  const readDetail = useCallback(
-    (showLoading: boolean) => {
-      if (!open) return;
-      const seq = ++detailSeq.current;
-      if (showLoading) setDetail(undefined);
-      // Local store first, the server second — see `readSessionDetail` for
-      // why the second step is not optional: a teammate's Session in a Project
-      // this machine has bound carries a local `projectPath` and is not in the
-      // local store.
-      readSessionDetail(open)
-        .then((result) => {
-          if (result) writeCachedDetail(open, result);
-          if (seq !== detailSeq.current) return;
-          // Keep the previous object when nothing changed.
-          //
-          // This is the difference between a background refresh being free and
-          // being the single most expensive thing the panel does. `detail` flows
-          // into `visible` → `groups` → every `Row`'s `group` prop, so swapping
-          // in a structurally identical object invalidates every memo in the
-          // tree and re-renders every mounted row — hundreds of them, mid-scroll.
-          setDetail((current) => (sameDetail(current, result) ? current : result));
-          setEntriesPending(false);
-          setDetailError(null);
-        })
-        .catch((e) => {
-          if (seq === detailSeq.current) {
-            // A failed read over a painted shell must not leave the masthead up
-            // with an empty timeline under it — that reads as "no rows".
-            setDetail(null);
-            setEntriesPending(false);
-            // Deliberately NOT `setError`: that banner spans the whole board,
-            // and one Session failing to open says nothing about the other
-            // four hundred. It goes in the pane that failed.
-            setDetailError(String(e));
-          }
-        });
-    },
-    [open],
-  );
+    return narrowDockWidth;
+  }, [mainWidth, dockWide, narrowDockWidth]);
 
   // A different Session is a different conversation; the chat does not
   // follow you into it.
   useEffect(() => {
     setChatOpen(false);
   }, [open?.sessionId]);
-
-  useEffect(() => {
-    if (!open) {
-      detailSeq.current += 1;
-      setDetail(undefined);
-      setEntriesPending(false);
-      return;
-    }
-    // A Session read once this browsing session paints from memory and refreshes
-    // behind the content. Stepping back to the board and into the next row is
-    // the normal way to use the Timeline, and re-reading SQLite for a *finished*
-    // Session put a blank panel in front of that every time.
-    const cached = readCachedDetail(open);
-    if (cached) {
-      setDetail(cached);
-      setEntriesPending(false);
-      readDetail(false);
-      return;
-    }
-
-    // Nothing cached — but the board row this was opened from IS the summary,
-    // so the masthead can paint now and the timeline can arrive after it. That
-    // matters most for a Session held on the server, where the read is a paged
-    // network walk rather than a local SQLite hit and the whole pane would
-    // otherwise sit on "Reading the session…" for seconds.
-    const row = boardRowFor(sessions, open);
-    if (row) {
-      setDetail(shellDetail(row));
-      setEntriesPending(true);
-      readDetail(false);
-      return;
-    }
-
-    setEntriesPending(false);
-    readDetail(true);
-    // `sessions` is read for the opening frame only — re-running this effect on
-    // every board refresh would re-paint the shell over a loaded timeline.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, readDetail]);
-
-  // A live Session keeps growing while it is open — piggyback the detail
-  // re-read on the same signals that refresh the list, without flashing the
-  // loading state over content that is already on screen.
-  //
-  // Gated on the Session actually being live. `sessions` changes on every board
-  // refresh — a 15 s poll plus git and capture events — and re-reading a
-  // *finished* Session on each of those costs a megabyte of IPC and a full
-  // deserialize to learn that nothing moved. A Session whose last update is
-  // older than the live window is not going to grow.
-  useEffect(() => {
-    if (!open || !loaded || !detail) return;
-    if (sessionState(detail.summary) !== "live") return;
-    readDetail(false);
-    // `sessions` is the freshest signal that a background refresh landed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions]);
+  const { detail, entriesPending, entriesStreaming, detailError } = useOpenSessionDetail({
+    open,
+    sessions,
+    loaded,
+  });
 
   /** The cap was reached, so there is older history the board is not showing. */
   const capped = !projectFilter && sessions.length >= BOARD_LIMIT;
@@ -653,52 +256,40 @@ export function ArtifactsPanel() {
   const narrowed = query.trim().length > 0 || activeFacetCount(selection) > 0 || people.length > 0;
 
   const filterMenu = (
-    <BoardFilters
-      // Counts against everything the board holds, never against what the
-      // search has already narrowed.
-      sessions={sessions}
-      directory={directory}
-      projectFilter={projectFilter}
-      onProjectFilter={setProjectFilter}
-      agentFilter={selection.agent}
-      onAgentFilter={(agent) => setSelection((prev) => ({ ...prev, agent }))}
-      peopleFilter={people}
-      onPeopleFilter={setPeople}
-    />
+    <>
+      <Segmented
+        value={view}
+        onValueChange={setTimelineView}
+        options={VIEWS}
+        size="sm"
+        aria-label="View"
+      />
+      <BoardFilters
+        // Counts against everything the board holds, never against what the
+        // search has already narrowed.
+        sessions={sessions}
+        directory={directory}
+        projectFilter={projectFilter}
+        onProjectFilter={setProjectFilter}
+        agentFilter={selection.agent}
+        onAgentFilter={(agent) => setSelection((prev) => ({ ...prev, agent }))}
+        peopleFilter={people}
+        onPeopleFilter={setPeople}
+      />
+    </>
   );
 
   return (
-    // The tab is chrome; the two scrollers are content sitting in it. That is
-    // the whole reason for the colour step and the rounded tops — a header that
-    // shares its background with the list under it needs a rule to separate
-    // them, and a curve says it better than a line.
-    <div className="flex h-full min-h-0 flex-col bg-[var(--card)]">
-      {error && (
-        <p className="shrink-0 bg-[var(--atlas-status-error-background)] px-4 py-1.5 text-xs text-[var(--atlas-status-error-foreground)]">
-          {error}
-        </p>
-      )}
+    <div className="flex h-full min-h-0 flex-col bg-[var(--background)]">
+      {error && <p className="shrink-0 bg-error-muted px-4 py-1.5 text-xs text-error">{error}</p>}
 
-      {/* One card, inset on every side.
-       *
-       * The same recipe as the project rail and team chat: a near-black
-       * surface floating on the tab's own colour, its edge carried by a
-       * hairline ring with a soft shadow behind it. Inset on ALL four sides —
-       * it used to have no top margin, so its rounded top corners were cut
-       * off against the tab strip and the card read as a broken box rather
-       * than a floating one.
-       *
-       * There is no chrome bar above it any more. A breadcrumb that existed
-       * only while a Session was open appeared the instant you clicked a row,
-       * shoving the whole card down 32px with no transition — and it said the
-       * title that is already the first thing in the reader beside it. */}
+      {/* Flat, edge to edge. This was a rounded card inset 4px on a lighter
+          frame — a panel inside the column's own. The column border is the
+          edge; the board and the reader are separated by the dock's own rule.
+          A rule along the top, under the window's bar, so the view starts
+          where the bar ends — the team chat's (`comms-panel.tsx`). */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          // On a near-black panel a shadow has almost nothing to darken, so
-          // the ring carries the edge and the shadow only lifts the card.
-          className="relative flex min-h-0 flex-1 overflow-hidden rounded-lg bg-background shadow-lg ring-1 ring-border"
-          style={{ margin: CARD_INSET }}
-        >
+        <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border bg-background">
           {/* `flex`, not just `flex-1`: the board is a column that sizes
               itself with `flex-1 min-h-0` so its list scrolls inside a bounded
               height. In a non-flex parent that chain never resolves, the
@@ -707,33 +298,58 @@ export function ArtifactsPanel() {
             {/* The board, always. It is the index you read *from*, and
                 replacing it to show one Session lost your place on every open.
                 Hidden only when the reader is widened on purpose. */}
-            {!(open && dockWide) &&
-              (sessions.length === 0 && loaded && !cloudPending ? (
-                <NotEnabled />
-              ) : (
-                <TimelineBoard
-                  sessions={visible}
-                  directory={directory}
-                  openKey={open ? openKeyOf(open) : null}
-                  loading={!loaded || cloudPending}
-                  narrowed={narrowed}
-                  query={query}
-                  onQuery={setQuery}
-                  onOpen={onOpenRow}
-                  filters={filterMenu}
-                  note={
-                    capped && (
-                      // Say what is being left out. A board that silently
-                      // stops at the newest few hundred reads as "this is
-                      // everything".
-                      <p className="text-center text-2xs text-muted-foreground">
-                        Showing the newest {BOARD_LIMIT} sessions — filter by project for a full
-                        history.
-                      </p>
-                    )
-                  }
-                />
-              ))}
+            {sessions.length === 0 && loaded && !cloudPending ? (
+              !boardHidden && <NotEnabled />
+            ) : (
+              <div
+                inert={boardHidden}
+                aria-hidden={boardHidden || undefined}
+                className={cn(
+                  "flex min-h-0 min-w-0 flex-1",
+                  boardHidden && "invisible absolute inset-y-0 left-0",
+                )}
+                style={boardHidden ? { width: mainWidth - narrowDockWidth } : undefined}
+              >
+                {view === "trace" ? (
+                  <TraceView
+                    boardSessions={sessions}
+                    directory={directory}
+                    projectPaths={projectPaths}
+                    projectsKey={projectsKey}
+                    projectFilter={projectFilter}
+                    agent={selection.agent}
+                    people={people}
+                    onOpen={openSession}
+                    filters={boardHidden ? null : filterMenu}
+                  />
+                ) : (
+                  <TimelineBoard
+                    sessions={visible}
+                    directory={directory}
+                    openKey={open ? openKeyOf(open) : null}
+                    loading={!loaded || cloudPending}
+                    narrowed={narrowed}
+                    query={query}
+                    onQuery={setQuery}
+                    onOpen={onOpenRow}
+                    // The filters are portalled into the titlebar, so a hidden
+                    // board must not leave them there.
+                    filters={boardHidden ? null : filterMenu}
+                    note={
+                      capped && (
+                        // Say what is being left out. A board that silently
+                        // stops at the newest few hundred reads as "this is
+                        // everything".
+                        <p className="text-center text-2xs text-muted-foreground">
+                          Showing the newest {BOARD_LIMIT} sessions — filter by project for a full
+                          history.
+                        </p>
+                      )
+                    }
+                  />
+                )}
+              </div>
+            )}
 
             {open && (
               // The dock. A share of the tab rather than a dragged width:
@@ -760,24 +376,6 @@ export function ArtifactsPanel() {
                     wide={dockWide}
                     onToggleWide={toggleTimelineSidebar}
                     onClose={() => openSession(null)}
-                    actions={
-                      detail && (
-                        <HeaderDock>
-                          {/* Grounded chat about this Session. It lived on the
-                              footer bar until that became the web's two
-                              morphs; it is an action about the record, so it
-                              belongs with Export rather than beside them. */}
-                          <DockButton
-                            label={chatOpen ? "Close chat" : "Ask about this session"}
-                            active={chatOpen}
-                            onClick={() => setChatOpen((v) => !v)}
-                          >
-                            <Sparkles size={12} />
-                          </DockButton>
-                          <ExportButton detail={detail} />
-                        </HeaderDock>
-                      )
-                    }
                   />
                   {/* `@container`: the reader's measure and its stat grid size
                     themselves against the dock, not the window, so the same
@@ -795,6 +393,7 @@ export function ArtifactsPanel() {
                             projectPath={open.projectPath}
                             comments={comments}
                             entriesPending={entriesPending}
+                            entriesStreaming={entriesStreaming}
                             // Only when there is no local copy. A synced Session
                             // of your own is on both sides, and the local blob
                             // read is faster and works offline.
@@ -805,28 +404,32 @@ export function ArtifactsPanel() {
                             }
                             remoteProjectId={open.remoteProjectId ?? null}
                             focusCommitSha={open.commitSha}
+                            focusAnchor={open.anchor}
+                            // Grounded chat about this Session. Its button is
+                            // in the reader's footer with the other actions on
+                            // the record; the panel it opens is this pane's.
+                            chatOpen={chatOpen}
+                            onToggleChat={() => setChatOpen((v) => !v)}
                           />
                         </div>
-                        <aside
-                          className="atlas-split shrink-0 overflow-hidden border-l border-[var(--border)]"
-                          style={{ width: chatOpen ? panelWidth : 0 }}
-                          aria-hidden={!chatOpen}
-                        >
-                          {/* Fixed inner width so the content does not reflow
-                           *  through the animation — a panel that re-wraps every
-                           *  frame while opening reads as a glitch, not a
-                           *  transition. */}
-                          <div style={{ width: panelWidth }} className="h-full">
-                            {chatOpen && (
+                        {chatOpen && (
+                          // At its full width from the first frame, so the
+                          // record beside it reflows once; only the content
+                          // slides in (`.atlas-split-in`, transform + opacity).
+                          <aside
+                            className="shrink-0 overflow-hidden border-l border-[var(--border)]"
+                            style={{ width: CHAT_WIDTH }}
+                          >
+                            <div style={{ width: CHAT_WIDTH }} className="atlas-split-in h-full">
                               <SessionChatPanel
                                 detail={detail}
                                 projectPath={open.projectPath}
                                 remoteProjectId={open.remoteProjectId ?? null}
                                 onClose={() => setChatOpen(false)}
                               />
-                            )}
-                          </div>
-                        </aside>
+                            </div>
+                          </aside>
+                        )}
                       </div>
                     )}
                   </div>
@@ -836,58 +439,6 @@ export function ArtifactsPanel() {
           </main>
         </div>
       </div>
-    </div>
-  );
-}
-
-/**
- * The first thing a new user sees.
- *
- * Not an error, and not three alarms — capture being off is the default state of
- * every Project, and the only useful thing to say about it is what turning it
- * on would give you.
- */
-function NotEnabled() {
-  return (
-    <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-      <h2 className="text-md font-medium text-[var(--foreground)]">Nothing captured yet</h2>
-      <p className="mt-1.5 max-w-[420px] text-sm leading-relaxed text-[var(--muted-foreground)]">
-        Turn capture on for a project and Atlas records what you asked, what the agent did, and
-        which commits came out of it — stored on this machine, with secrets scrubbed before anything
-        is written.
-      </p>
-      {/* The control is deliberately not repeated here. Capture is per project
-       *  and this board spans all of them, so the honest place to switch it on
-       *  is the project pill in the titlebar, which names the one it applies to. */}
-      <p className="mt-3 max-w-[420px] text-xs text-[var(--atlas-text-disabled)]">
-        Click the project name in the titlebar to turn it on.
-      </p>
-    </div>
-  );
-}
-
-/** The store answered: this Session does not exist (deleted, or another
- *  Project's id). Distinct from loading — a spinner here never resolves. */
-/**
- * The open Session could not be read.
- *
- * `reason` separates "the row is gone" from "the read failed", which are not
- * the same thing and used to look identical: a Session held on the server that
- * this Organisation cannot reach was reported as deleted.
- */
-function NotFound({ reason, onBack }: { reason: string | null; onBack: () => void }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center px-8 text-center">
-      <p className="text-base text-[var(--secondary-foreground)]">
-        {reason ?? "This session no longer exists."}
-      </p>
-      <button
-        type="button"
-        onClick={onBack}
-        className="mt-3 cursor-pointer rounded-md border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
-      >
-        Back to sessions
-      </button>
     </div>
   );
 }

@@ -9,7 +9,7 @@ vi.mock("../lib/agents-api", async (importOriginal) => {
   return { agents: { ...real.agents, respondPermission } };
 });
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useChatStore } from "../stores/chat-store";
 import { PermissionModal } from "./permission-modal";
 
@@ -94,9 +94,67 @@ describe("keys on the permission card", () => {
     expect(picked()).toEqual(["allow-once"]);
   });
 
+  /// The window handler steps aside only while the "tell the agent" field
+  /// holds focus, which it knows by the ref the view forwards to its
+  /// textarea. Lose that ref and typing "1" there would approve option 1.
+  it("digits and Enter typed into the instruction field never pick an option", () => {
+    pending("shell", "rm -rf build");
+    const field = screen.getByPlaceholderText(/what to do instead/);
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    fireEvent.keyDown(field, { key: "1" });
+    fireEvent.keyDown(field, { key: "2" });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(respondPermission).not.toHaveBeenCalled();
+  });
+
   it("any other card keeps Enter for Allow", () => {
     pending("shell", "rm -rf build");
     fireEvent.keyDown(window, { key: "Enter" });
     expect(picked()).toEqual(["allow-once"]);
   });
+
+  /// Esc on the plan review reached both the window handler and the dialog's
+  /// own dismiss, so the agent was sent two cancels for one request.
+  it("Esc on the plan review cancels once", () => {
+    pendingPlan();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    expect(picked()).toEqual(["cancelled"]);
+  });
+
+  /// The plan review opens with Cancel focused. Enter there belongs to the
+  /// button; the window handler must not turn it into an approve.
+  it("Enter on the plan review's focused Cancel never approves", async () => {
+    pendingPlan();
+    const cancel = screen.getByText("Cancel").closest("button");
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.keyDown(cancel!, { key: "Enter" });
+    expect(picked()).not.toContain("allow-once");
+  });
 });
+
+function pendingPlan() {
+  useChatStore.setState({
+    sessions: {
+      "chat-1": { acpSessionId: "sess-1", agentType: "atlas-agent", messages: [] },
+    } as never,
+    pendingPermissions: {
+      "sess-1": [
+        {
+          agentId: "atlas-agent",
+          acpSessionId: "sess-1",
+          requestId: "req-plan",
+          toolCall: {
+            toolCallId: "call-plan",
+            title: "Ready to code?",
+            kind: "other",
+            toolName: "ExitPlanMode",
+            rawInput: { plan: "1. Do the thing" },
+          },
+          options: OPTIONS,
+        },
+      ],
+    } as never,
+  });
+  render(<PermissionModal tabId="chat-1" />);
+}

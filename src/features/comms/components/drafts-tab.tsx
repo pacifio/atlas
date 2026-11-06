@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FilePlus2, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { timeAgo } from "@/lib/time-ago";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 import { CommsAvatar } from "./comms-avatar";
 import { comms } from "../lib/comms-api";
 import { useCommsStore } from "../stores/comms-store";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import type { ChatConversation, PromptDraft } from "../types";
+import { DraftsTabView } from "./views/drafts-tab-view";
 
 /** Web parity: `CHAT_DRAFT_TITLE_MAX`. Refused server-side, not truncated. */
 const TITLE_MAX = 200;
@@ -92,132 +90,19 @@ export function DraftsTab({ conv }: { conv: ChatConversation }) {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* One full-width band with the action inline, matching the agent
-          history sidebar's search row (`session-sidebar.tsx`) — a boxed input
-          floating inside padding read as a second, competing surface. */}
-      <div className="flex h-[32px] shrink-0 items-center gap-1.5 border-b border-border px-3">
-        <FilePlus2 size={11} className="shrink-0 text-muted-foreground" />
-        <input
-          ref={inputRef}
-          value={title}
-          maxLength={TITLE_MAX}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void create();
-            }
-          }}
-          placeholder="Name a new draft…"
-          aria-label="New draft title"
-          className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
-        />
-        <Hint label="Create draft">
-          <button
-            type="button"
-            disabled={!title.trim() || creating}
-            onClick={() => void create()}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-          >
-            {creating ? <Loader2 size={11} className="animate-spin" /> : <Plus size={12} />}
-          </button>
-        </Hint>
-      </div>
-
-      <div className="hide-scrollbar min-h-0 flex-1 overflow-y-auto pb-3">
-        {drafts === undefined &&
-          [0, 1, 2].map((i) => (
-            <div key={i} className="flex items-center gap-2.5 px-3 py-[9px]">
-              <div className="h-4 w-4 rounded bg-[var(--card)] opacity-50 atlas-marker-running" />
-              <div
-                className="h-[9px] rounded bg-[var(--card)] opacity-50 atlas-marker-running"
-                style={{ width: 110 + ((i * 37) % 60) }}
-              />
-            </div>
-          ))}
-        {drafts?.length === 0 && (
-          <p className="px-3 pt-4 text-center text-xs text-disabled">No drafts yet.</p>
-        )}
-        {drafts?.map((d) => {
-          const author = members.get(d.created_by) ?? null;
-          // Table row, not a card: title takes the width it can, then a
-          // fixed author column, then the created date — so the eye scans a
-          // straight edge down the list instead of a ragged one.
-          return (
-            <div
-              key={d.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => openInCenter(d)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") openInCenter(d);
-              }}
-              className="flex cursor-pointer items-center gap-2 border-b border-border-subtle px-3 py-2 transition-colors last:border-b-0 hover:bg-element-hover"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                    {d.title}
-                  </span>
-                  {d.sent_at !== null && (
-                    <span className="shrink-0 rounded-full bg-[var(--atlas-element-active)] px-1.5 py-px text-2xs font-medium text-foreground">
-                      sent
-                    </span>
-                  )}
-                </div>
-                <span className="mt-0.5 block truncate text-2xs text-disabled">
-                  Updated {timeAgo(new Date(d.updated_at).toISOString(), { suffix: true })}
-                </span>
-              </div>
-
-              {/* The tooltip carries the FULL name — the label beside the
-                  avatar is only the first. A draft list is short and
-                  deliberate (not a mass-rendered transcript row), so it earns
-                  the real component over a native title. */}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="flex min-w-0 shrink-0 items-center">
-                      <CommsAvatar member={author} size={16} />
-                      <span className="ml-1 max-w-[72px] truncate text-2xs text-muted-foreground">
-                        {firstName(author?.name)}
-                      </span>
-                    </span>
-                  }
-                />
-                <TooltipContent side="top" sideOffset={4}>
-                  Created by {author?.name ?? "Unknown"}
-                </TooltipContent>
-              </Tooltip>
-
-              <span className="w-[62px] shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
-                {formatCreated(d.created_at)}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <DraftsTabView
+      drafts={drafts}
+      title={title}
+      onTitleChange={setTitle}
+      creating={creating}
+      onCreate={() => void create()}
+      onOpen={openInCenter}
+      titleMax={TITLE_MAX}
+      inputRef={inputRef}
+      author={(id) => {
+        const member = members.get(id) ?? null;
+        return { name: member?.name ?? null, avatar: <CommsAvatar member={member} size={16} /> };
+      }}
+    />
   );
-}
-
-/** Created dates are calendar facts, not elapsed ones — a short absolute date
- *  reads faster in a column than "3 weeks ago", and the relative form is
- *  already carrying the updated-at line above it. */
-function formatCreated(at: number): string {
-  const d = new Date(at);
-  const now = new Date();
-  return d.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "2-digit" }),
-  });
-}
-
-/** Just the given name — the row has a date column to protect, and the
- *  avatar's `title` still carries the whole name for anyone who asks. */
-function firstName(name: string | undefined): string {
-  const first = (name ?? "").trim().split(/\s+/)[0];
-  return first || "Unknown";
 }

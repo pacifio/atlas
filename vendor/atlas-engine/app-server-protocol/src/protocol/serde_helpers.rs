@@ -1,3 +1,4 @@
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -7,8 +8,8 @@ use serde::Serializer;
 
 #[cfg(test)]
 pub(crate) fn nullable_string_schema(
-    generator: &mut schemars::r#gen::SchemaGenerator,
-) -> schemars::schema::Schema {
+    generator: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
     generator.subschema_for::<Option<String>>()
 }
 

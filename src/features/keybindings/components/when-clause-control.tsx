@@ -1,27 +1,14 @@
 /**
  * The "When" control under a keybinding's title, and the popover that edits
  * it: a text field for the expression and, below it, the same expression as a
- * tree of conditions and groups. Ported from T3 Code's KeybindingsSettings
- * (`WhenClauseControl`, `WhenExpressionBuilder`, `WhenExpressionNodeEditor`),
- * on Atlas's primitives. Unlike T3 there is no Save step: a valid expression
- * saves as it is typed or built, like every other setting.
+ * tree of conditions and groups, on Atlas's primitives. There is no Save
+ * step: a valid expression saves as it is typed or built, like every other
+ * setting.
  */
 
 import { useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, CircleX, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { Input } from "@/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Select } from "@/ui/select";
-import { Hint } from "@/ui/tooltip";
 import {
   DEFAULT_WHEN_VARIABLE,
   isKnownWhenVariable,
@@ -34,6 +21,20 @@ import {
   whenToExpression,
   type WhenNode,
 } from "../lib/when";
+import {
+  Button,
+  Icon,
+  Input,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Select,
+  Hint,
+} from "@tryatlas/design";
 
 type BooleanOperator = "and" | "or";
 

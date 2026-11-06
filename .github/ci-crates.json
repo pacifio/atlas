@@ -97,7 +97,15 @@
     "cross": true
   },
   {
+    "crate": "atlas-remote-control",
+    "clippy": true
+  },
+  {
     "crate": "atlas-retrieval",
+    "clippy": true
+  },
+  {
+    "crate": "atlas-security",
     "clippy": true
   },
   {

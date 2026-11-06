@@ -81,8 +81,6 @@ pub struct CodexMemory {
     threads: Vec<CodexThread>,
 }
 
-/// History-list row for a Codex session, shaped to match `ClaudeSessionMeta`
-/// so the chat sidebar can merge both agents' sessions uniformly. `id` is the
 // The Codex SESSION-HISTORY surface used to live here: `list_codex_sessions`
 // and `codex_delete_session`, reading and archiving rows in
 // `~/.codex/state_*.sqlite` so the sidebar could show Codex chats. Both are

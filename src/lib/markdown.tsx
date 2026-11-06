@@ -9,13 +9,11 @@
 // `<Markdown>` API; only the first render in a session waits on the chunk, and
 // `primeMarkdown()` removes even that.
 //
-// The highlight.js token stylesheet stays HERE, not in the impl: it is small,
-// and keeping it on the eager side means formatted code never renders unstyled
-// for a frame while the impl chunk loads. It is Atlas's own `styles/hljs.css`
-// (theme keys), not a fixed highlight.js palette — see decision 13.
+// The highlight.js token colours are the package's `syntax.css` (theme keys),
+// loaded eagerly with the rest of its styles, so formatted code never renders
+// uncoloured for a frame while the impl chunk loads.
 
 import { lazy, memo, Suspense } from "react";
-import "@/styles/hljs.css";
 import { cn } from "@/lib/utils";
 import type { MarkdownProps } from "./markdown-props";
 
@@ -28,26 +26,23 @@ export function primeMarkdown(): void {
 }
 
 /**
- * Shared Markdown renderer used by the chat assistant bubbles and the canvas
- * note cards/inspector. Styled overrides match the Atlas design tokens.
+ * Shared Markdown renderer for the plans panel, the plan review, canvas notes
+ * and the notebook viewer, on the package's `.prose-session` typography.
  */
-export const Markdown = memo(function Markdown({ children, className }: MarkdownProps) {
+export const Markdown = memo(function Markdown({ children, className, fileRoot }: MarkdownProps) {
   return (
     <Suspense
       fallback={
         // Unformatted beats absent: same text, same type scale, so the block
         // occupies about its final height and is readable immediately.
-        <div
-          className={cn(
-            "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text whitespace-pre-wrap",
-            className,
-          )}
-        >
+        <div className={cn("prose-session whitespace-pre-wrap select-text", className)}>
           {children}
         </div>
       }
     >
-      <MarkdownImpl className={className}>{children}</MarkdownImpl>
+      <MarkdownImpl className={className} fileRoot={fileRoot}>
+        {children}
+      </MarkdownImpl>
     </Suspense>
   );
 });

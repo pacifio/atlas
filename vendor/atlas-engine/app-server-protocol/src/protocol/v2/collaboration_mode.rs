@@ -17,6 +17,7 @@ pub struct CollaborationModeListParams {}
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+#[schemars(transform = nest_reasoning_effort_nullable)]
 pub struct CollaborationModeMask {
     pub name: String,
     pub mode: Option<ModeKind>,
@@ -24,6 +25,17 @@ pub struct CollaborationModeMask {
     #[serde(rename = "reasoning_effort")]
     #[ts(rename = "reasoning_effort")]
     pub reasoning_effort: Option<Option<ReasoningEffort>>,
+}
+
+/// `reasoning_effort` as the nested nullable schemars 0.8 wrote for
+/// `Option<Option<T>>`; schemars 1 writes the single layer `anyOf: [T, null]`.
+#[cfg(test)]
+fn nest_reasoning_effort_nullable(schema: &mut schemars::Schema) {
+    let Some(effort) = schema.pointer_mut("/properties/reasoning_effort/anyOf/0") else {
+        return;
+    };
+    let inner = effort.take();
+    *effort = serde_json::json!({ "anyOf": [inner, { "type": "null" }] });
 }
 
 impl From<CoreCollaborationModeMask> for CollaborationModeMask {

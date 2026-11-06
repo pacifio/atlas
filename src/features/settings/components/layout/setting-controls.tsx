@@ -6,14 +6,10 @@
 
 import { useEffect, useState } from "react";
 import { Minus, Plus } from "lucide-react";
-import { Switch } from "@/ui/switch";
-import { Select, type SelectOption } from "@/ui/select";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Slider } from "@/ui/slider";
 import type { AppSettings, BooleanSettingKey } from "../../lib/app-settings";
 import { settingMeta } from "../../lib/settings-sections";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
+import { Switch, Select, type SelectOption, IconButton, Input, Slider } from "@tryatlas/design";
 
 /** "Needs you: System notification", not just "System notification": one page
  *  can hold several rows with the same title, one per section, and a screen
@@ -89,14 +85,17 @@ type TextKey = {
     : never;
 }[keyof AppSettings];
 
-/** A − n + stepper over an integer key, bounded by its registry `min`/`max`. */
+/** A − n + stepper over an integer key, bounded by its registry `min`/`max`.
+ *  `zeroLabel` names a 0 that means something other than a count ("Off"). */
 export function SettingStepper({
   setting,
   unit = "",
+  zeroLabel,
   disabled,
 }: {
   setting: NumberKey;
   unit?: string;
+  zeroLabel?: string;
   disabled?: boolean;
 }) {
   const scoped = useScopedSetting(setting);
@@ -117,8 +116,14 @@ export function SettingStepper({
         onClick={() => step(-1)}
       />
       <span className="min-w-12 text-center text-xs tabular-nums" aria-live="polite">
-        {value}
-        {unit}
+        {value === 0 && zeroLabel ? (
+          zeroLabel
+        ) : (
+          <>
+            {value}
+            {unit}
+          </>
+        )}
       </span>
       <IconButton
         icon={Plus}
@@ -164,6 +169,45 @@ export function SettingText({
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") setDraft(saved);
+      }}
+    />
+  );
+}
+
+/** A multi-line text area over a string key, for prose (instructions). Saves
+ *  when it loses focus or on ⌘↵, not per keystroke; Escape reverts. */
+export function SettingTextarea({
+  setting,
+  placeholder,
+  rows = 4,
+  maxLength,
+}: {
+  setting: TextKey;
+  placeholder?: string;
+  rows?: number;
+  maxLength?: number;
+}) {
+  const scoped = useScopedSetting(setting);
+  const saved = scoped.value as string;
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved]);
+  const commit = () => {
+    if (draft.trim() !== saved) scoped.set(draft.trim());
+  };
+  return (
+    <textarea
+      className="block w-full min-w-0 resize-y rounded-md border border-border bg-panel-input px-2 py-1.5 text-xs leading-relaxed text-foreground placeholder:text-muted-foreground focus:border-border-strong focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+      value={draft}
+      rows={rows}
+      maxLength={maxLength}
+      placeholder={placeholder}
+      disabled={scoped.globalOnly}
+      aria-label={accessibleName(setting)}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) event.currentTarget.blur();
         if (event.key === "Escape") setDraft(saved);
       }}
     />

@@ -7,9 +7,9 @@
 //!   timestamp. No transcript is fetched, here or ever — the conversation
 //!   arrives when the user opens the row, replayed by the agent through
 //!   `session/load`.
-//! * **Imports land archived.** They go to the history view, not the active
-//!   sidebar, so pulling in a year of sessions never buries the work in front
-//!   of you (`thread_import.rs:884`).
+//! * **Old imports land settled.** They go to the sidebar's Settled shelf, not
+//!   the active list, so pulling in a year of sessions never buries the work
+//!   in front of you (`thread_import.rs:884`).
 //!
 //! Nothing in this file knows an agent's name. Whether an agent can be imported
 //! from at all is decided by whether its connection hands back a session list,
@@ -91,17 +91,18 @@ pub async fn collect_all_sessions(
 /// cursor lists the same session on every page, so a fixed set would let one
 /// conversation through as several rows.
 ///
-/// Rows land archived — in History, not the sidebar — unless `unarchive_since`
-/// is given and the session's `updated_at` is at or after it. The manual import
-/// and the one-time backfill pass `None`: dumping an agent's whole past into
-/// the sidebar would bury what the user is doing now. The per-project sync
+/// Rows land settled — on the Settled shelf, not in the active list, settled
+/// at their own `updated_at` — unless `active_since` is given and the
+/// session's `updated_at` is at or after it. The manual import and the
+/// one-time backfill pass `None`: dumping an agent's whole past into the
+/// active list would bury what the user is doing now. The per-project sync
 /// (ADR-0001 amendment, ATL-422) passes a recency cutoff, so a session started
-/// in a terminal an hour ago shows up and one from last spring does not.
+/// in a terminal an hour ago lands active and one from last spring does not.
 pub fn importable_threads(
     sessions: Vec<AgentSessionInfo>,
     agent_id: &AgentId,
     known: &HashSet<acp::SessionId>,
-    unarchive_since: Option<DateTime<Utc>>,
+    active_since: Option<DateTime<Utc>>,
 ) -> Vec<ThreadMetadata> {
     let now = Utc::now();
     let mut seen = known.clone();
@@ -114,13 +115,12 @@ pub fn importable_threads(
             // The agent's own last-activity time, so an import sorts into
             // history where it belongs rather than all at "now".
             let updated_at = session.updated_at.unwrap_or(now);
+            let mut row =
+                ThreadMetadata::new(ThreadId::new(), agent_id.clone(), PathList::default());
+            row.session_id = Some(session.session_id);
+            row.title = session.title;
+            row.updated_at = updated_at;
             Some(ThreadMetadata {
-                thread_id: ThreadId::new(),
-                session_id: Some(session.session_id),
-                agent_id: agent_id.clone(),
-                title: session.title,
-                title_override: None,
-                updated_at,
                 // The agent's own start time when it reports one; otherwise
                 // the activity time it reported at import. Schema v1's
                 // `SessionInfo` has no `createdAt`, and this used to stay
@@ -137,7 +137,14 @@ pub fn importable_threads(
                 remote_connection: None,
                 // Atlas was not there to see which branch it ran on.
                 branch: None,
-                archived: unarchive_since.is_none_or(|cutoff| updated_at < cutoff),
+                // Nor which model.
+                model: None,
+                settled_at: active_since
+                    .is_none_or(|cutoff| updated_at < cutoff)
+                    .then_some(updated_at),
+                // Never viewed, never pinned or snoozed, and no turn Atlas saw
+                // complete: an import is never unread.
+                ..row
             })
         })
         .collect()

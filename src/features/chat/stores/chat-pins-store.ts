@@ -15,7 +15,7 @@ import { assistantMessageText, userMessageText } from "../lib/turn-rows";
  * exception on purpose: it is a view bookmark, not conversation data. The
  * agent never sees it, no other surface reads it, and losing one costs the
  * reader a scroll. That is `persist` to localStorage, the same trade the
- * recent-chats rail already makes — not a store file, a command and a
+ * sidebar's project scope makes — not a store file, a command and a
  * migration. (Comms pins go to the server because they are shared with other
  * humans; these are not.)
  *

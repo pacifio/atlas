@@ -1,0 +1,20 @@
+id = "cmd-args"
+kind = "synthetic"
+vulnerable = false
+class = "none"
+severity = 0
+title = "Show git log for a branch"
+diff = '''
+--- a/src-tauri/src/commands/git.rs
++++ b/src-tauri/src/commands/git.rs
+@@ -1,0 +1,9 @@
++#[tauri::command]
++pub async fn git_log(repo: PathBuf, branch: String) -> Result<String, String> {
++    tokio::task::spawn_blocking(move || {
++        let out = Command::new("git").current_dir(&repo)
++            .args(["log", "--oneline", "--end-of-options", &branch])
++            .output().map_err(|e| e.to_string())?;
++        Ok(String::from_utf8_lossy(&out.stdout).into())
++    }).await.map_err(|e| e.to_string())?
++}
+'''

@@ -1,6 +1,6 @@
 // The files a session changed, as the capture record has them.
 //
-// The thread overview used to derive this list from tool arguments in the
+// The Details card's Changes section used to derive this list from tool arguments in the
 // renderer, which only ever saw Write/Edit calls: a `sed -i`, a heredoc or a
 // script changed files the rail never listed. The recorder (`capture.rs`)
 // attributes those by watching the tree around the shell call, so its record

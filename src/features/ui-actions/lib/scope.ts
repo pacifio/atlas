@@ -13,7 +13,8 @@ import { refuse } from "./args";
 
 /** The tab `tabId` in the active project's view, or a refusal saying why not. */
 export function tabInScope(tabId: string): Tab {
-  const tab = useLayoutStore.getState().tabs.find((t) => t.id === tabId);
+  const { tabs, destination } = useLayoutStore.getState();
+  const tab = tabs.find((t) => t.id === tabId) ?? (destination?.id === tabId ? destination : null);
   if (tab) return tab;
   const ownerId = projectIdForTab(tabId);
   const owner = ownerId

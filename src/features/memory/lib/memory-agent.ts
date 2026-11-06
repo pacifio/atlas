@@ -3,9 +3,11 @@
 // Two id-spaces meet in the Memory tab and they are NOT the same space:
 //
 //   * The **registry** identifies an agent by its plugin id — "claude-acp",
-//     "codex-acp", "amp-acp". `agentMeta` treats these as opaque and remaps
-//     nothing; that is a deliberate invariant of the ACP registry port and is
-//     locked by `agent-meta.test.ts` ("treats an agent id as opaque").
+//     "codex-acp", "amp-acp". `agentMeta` treats these as opaque, a deliberate
+//     invariant of the ACP registry port locked by `agent-meta.test.ts`
+//     ("treats an agent id as opaque"), except for the first-party aliases in
+//     `agent-identity.ts` (`claude-acp` keeps the Claude Code mark; `codex-acp`
+//     is opaque and draws its registry icon).
 //   * The **memory corpus** tags every doc, session and shared-memory event
 //     with a bare source — "claude", "codex", "atlas-agent" — written by
 //     `agent_memory.rs` long before the registry existed, and still written

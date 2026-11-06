@@ -55,7 +55,7 @@
         "cyan": "#7fd1e8",
         "green": "#9ecf8a",
         "orange": "#e0b070",
-        "pink": "#e59a72",
+        "pink": "#f0a0c8",
         "purple": "#c9a2f5",
         "red": "#f44747",
         "yellow": "#ffff00"
@@ -76,6 +76,7 @@
         "editor.match_bracket.background": "#2d2d2d",
         "editor.match_bracket.border": "#3d3d3d",
         "editor.selection.background": "#303030",
+        "hue.yellow": "#e0ca66",
         "panel.background": "#0a0a0a",
         "panel.input.background": "#0a0a0a",
         "syntax.attribute": "#60d199",
@@ -573,7 +574,7 @@
         "cyan": "#5ccfe6",
         "green": "#bbe67e",
         "orange": "#ffae57",
-        "pink": "#f29e74",
+        "pink": "#f5a6c8",
         "purple": "#d4bfff",
         "red": "#f28779",
         "yellow": "#ffcc66"
@@ -663,7 +664,7 @@
         "cyan": "#2b8fae",
         "green": "#4f8f1f",
         "orange": "#cf6d00",
-        "pink": "#c95f4e",
+        "pink": "#c2427e",
         "purple": "#8a5fd0",
         "red": "#d13a3a",
         "yellow": "#9a7a00"

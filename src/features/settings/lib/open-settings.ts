@@ -1,31 +1,19 @@
-import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { useSettingsNav, type SettingsSection } from "../stores/settings-nav-store";
 
 /**
- * Open the Settings tab already showing `section`.
- *
- * Both channels are used, because the panel has two ways of arriving at a
- * section and only one of them covers each case:
- *
- * - `data.section` becomes the panel's initial state, so a tab opened fresh
- *   *renders* on the right section. Without it the panel mounts on General and
- *   swaps a frame later — a visible flash on the common path.
- * - The nav store reaches a panel that is **already mounted** on another
- *   section, where the initial state has long since been read.
- *
- * Setting one without the other leaves half the ticket's requirement working.
+ * Bring up the Settings screen, on `section` when given (else wherever it was
+ * last left).
  *
  * `anchor` names one row on that section (a setting key, e.g. `"gitAutoFetch"`)
  * to scroll to and flash once it renders.
  */
-export function openSettingsSection(section: SettingsSection, anchor?: string): void {
-  useSettingsNav.getState().goTo(section, anchor);
-  useLayoutStore.getState().actions.addTab({
-    id: "settings",
-    type: "settings",
-    title: "Settings",
-    closable: true,
-    dirty: false,
-    data: { section },
-  });
+export function openSettingsSection(section?: SettingsSection, anchor?: string): void {
+  const nav = useSettingsNav.getState();
+  if (section) nav.goTo(section, anchor);
+  nav.setOpen(true);
+}
+
+/** Back to the workspace, which was left mounted underneath. */
+export function closeSettings(): void {
+  useSettingsNav.getState().setOpen(false);
 }

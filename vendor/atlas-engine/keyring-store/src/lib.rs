@@ -1,9 +1,72 @@
-use keyring::Entry;
-use keyring::Error as KeyringError;
+// Modified by Atlas from upstream OpenAI Codex (Apache-2.0). See CONTEXT.md.
+use keyring_core::Entry;
+use keyring_core::Error as KeyringError;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Debug;
+use std::sync::Mutex;
+use std::sync::PoisonError;
 use tracing::trace;
+
+/// Install the platform credential store as keyring-core's process-wide default, if
+/// no store is installed yet. Idempotent and cheap once installed.
+///
+/// keyring 3 picked a store implicitly from its enabled features; keyring-core has
+/// none until one is set, and every `Entry::new` before that fails with
+/// `NoDefaultStore`. Every entry this workspace makes goes through here first
+/// ([`DefaultKeyringStore`] below, and the app's agent-variable keychain), so there
+/// is no start-up ordering to get wrong. A store a caller already installed (the
+/// tests install mocks) is left alone. A failure to build the store is returned, not
+/// cached: the next call tries again.
+///
+/// The store each platform gets reads and writes the same OS items keyring 3 did for
+/// a given `(service, user)`:
+/// - macOS: the login keychain, generic password, service = service, account = user.
+/// - Windows: Credential Manager generic credential, target name `user.service`,
+///   Enterprise persistence, UTF-16LE blob.
+/// - Linux: Secret Service items with attributes `service` and `username`, in the
+///   default collection. keyring 3.6's `linux-native-async-persistent` default
+///   builder only ever built Secret Service credentials, never keyutils ones.
+pub fn ensure_default_store() -> Result<(), KeyringError> {
+    static INSTALL: Mutex<()> = Mutex::new(());
+    if keyring_core::get_default_store().is_some() {
+        return Ok(());
+    }
+    let _guard = INSTALL.lock().unwrap_or_else(PoisonError::into_inner);
+    if keyring_core::get_default_store().is_some() {
+        return Ok(());
+    }
+    keyring_core::set_default_store(platform_store()?);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, KeyringError> {
+    Ok(apple_native_keyring_store::keychain::Store::new()?)
+}
+
+#[cfg(target_os = "windows")]
+fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, KeyringError> {
+    Ok(windows_native_keyring_store::Store::new()?)
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, KeyringError> {
+    Ok(zbus_secret_service_keyring_store::Store::new()?)
+}
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd"
+)))]
+fn platform_store() -> Result<std::sync::Arc<keyring_core::CredentialStore>, KeyringError> {
+    Err(KeyringError::NotSupportedByStore(
+        "no credential store for this platform".to_string(),
+    ))
+}
 
 #[derive(Debug)]
 pub enum CredentialStoreError {
@@ -51,13 +114,14 @@ pub struct DefaultKeyringStore;
 impl KeyringStore for DefaultKeyringStore {
     fn load(&self, service: &str, account: &str) -> Result<Option<String>, CredentialStoreError> {
         trace!("keyring.load start, service={service}, account={account}");
+        ensure_default_store().map_err(CredentialStoreError::new)?;
         let entry = Entry::new(service, account).map_err(CredentialStoreError::new)?;
         match entry.get_password() {
             Ok(password) => {
                 trace!("keyring.load success, service={service}, account={account}");
                 Ok(Some(password))
             }
-            Err(keyring::Error::NoEntry) => {
+            Err(KeyringError::NoEntry) => {
                 trace!("keyring.load no entry, service={service}, account={account}");
                 Ok(None)
             }
@@ -73,6 +137,7 @@ impl KeyringStore for DefaultKeyringStore {
             "keyring.save start, service={service}, account={account}, value_len={}",
             value.len()
         );
+        ensure_default_store().map_err(CredentialStoreError::new)?;
         let entry = Entry::new(service, account).map_err(CredentialStoreError::new)?;
         match entry.set_password(value) {
             Ok(()) => {
@@ -88,13 +153,14 @@ impl KeyringStore for DefaultKeyringStore {
 
     fn delete(&self, service: &str, account: &str) -> Result<bool, CredentialStoreError> {
         trace!("keyring.delete start, service={service}, account={account}");
+        ensure_default_store().map_err(CredentialStoreError::new)?;
         let entry = Entry::new(service, account).map_err(CredentialStoreError::new)?;
         match entry.delete_credential() {
             Ok(()) => {
                 trace!("keyring.delete success, service={service}, account={account}");
                 Ok(true)
             }
-            Err(keyring::Error::NoEntry) => {
+            Err(KeyringError::NoEntry) => {
                 trace!("keyring.delete no entry, service={service}, account={account}");
                 Ok(false)
             }
@@ -109,9 +175,10 @@ impl KeyringStore for DefaultKeyringStore {
 pub mod tests {
     use super::CredentialStoreError;
     use super::KeyringStore;
-    use keyring::Error as KeyringError;
-    use keyring::credential::CredentialApi as _;
-    use keyring::mock::MockCredential;
+    use keyring_core::Error as KeyringError;
+    use keyring_core::api::CredentialApi as _;
+    use keyring_core::mock::Cred as MockCredential;
+    use std::cell::RefCell;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -130,7 +197,12 @@ pub mod tests {
                 .unwrap_or_else(PoisonError::into_inner);
             guard
                 .entry(account.to_string())
-                .or_insert_with(|| Arc::new(MockCredential::default()))
+                .or_insert_with(|| {
+                    Arc::new(MockCredential {
+                        specifiers: (String::new(), account.to_string()),
+                        inner: Mutex::new(RefCell::new(Default::default())),
+                    })
+                })
                 .clone()
         }
 

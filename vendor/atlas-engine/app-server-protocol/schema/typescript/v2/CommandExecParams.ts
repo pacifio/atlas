@@ -71,7 +71,7 @@ cwd?: string | null, /**
  * Matching names override inherited values. Set a key to `null` to unset
  * an inherited variable.
  */
-env?: { [key in string]?: string | null } | null, /**
+env?: { [key in string]: string | null } | null, /**
  * Optional initial PTY size in character cells. Only valid when `tty` is
  * true.
  */

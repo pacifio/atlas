@@ -1,10 +1,14 @@
 mod app_icon;
+#[cfg(target_os = "macos")]
+mod arrow_keys;
 mod auth;
 mod commands;
+mod fs_events;
 mod keep_awake;
 mod logging;
 #[cfg(target_os = "macos")]
 mod menu;
+mod nav_guard;
 mod notifier;
 mod open_vsx;
 mod sleep_watch;
@@ -103,6 +107,11 @@ pub fn run() {
         &context.config().identifier,
     ));
 
+    // A "Clear cache" / "Reset Atlas" the previous process scheduled runs here,
+    // before logging opens its file and before the WebView opens its store.
+    // See `commands::app_data_reset`.
+    let data_reset = commands::app_data_reset::apply_pending(atlas_profile::current());
+
     // Pick the rustls crypto provider, once, before anything can open a TLS
     // connection.
     //
@@ -129,6 +138,9 @@ pub fn run() {
     // Install a tracing subscriber that prints `tracing::info!` etc. to
     // stderr. Verbosity is controlled by `RUST_LOG`; see `logging.rs`.
     logging::init();
+    if let Some(applied) = &data_reset {
+        applied.log();
+    }
 
     // Load a `.env` from the current dir (if any) so source / fork builds can
     // point telemetry at their own PostHog OSS project via POSTHOG_KEY /
@@ -144,7 +156,8 @@ pub fn run() {
     // so the webview boot path can read it via `cli_take_initial_project_path`.
     let initial_project = commands::cli::parse_initial_project();
 
-    let builder = tauri::Builder::default();
+    // The main window may only navigate within the app; see `nav_guard.rs`.
+    let builder = tauri::Builder::default().plugin(nav_guard::init());
 
     // Single-instance — RELEASE ONLY. When a launcher starts the binary with a
     // project path while Atlas is already open, this plugin forwards that
@@ -248,7 +261,14 @@ pub fn run() {
                     system_is_light,
                 );
                 let _ = window.set_background_color(Some(color));
+                // tao leaves `trafficLightPosition` unapplied until the first
+                // resize; see the function.
+                commands::window::apply_traffic_light_inset(&window);
             }
+            // Arrow keys the webview leaves unhandled are not typed into the
+            // focused field; see the module.
+            #[cfg(target_os = "macos")]
+            arrow_keys::install();
             // The app icon, before the window shows. Later changes arrive
             // through `notify_settings_changed`.
             app_icon::apply(app.handle(), &config.effective().app_icon);
@@ -359,6 +379,8 @@ pub fn run() {
                 // manager that is not yet managed would miss the first one.
                 commands::comms::install(app.handle());
                 commands::artifacts_cloud::install(app.handle());
+                // Universal RC: nothing dials until a room is started.
+                commands::rc::install(app.handle());
                 commands::auth::restore_on_launch(app.handle());
 
                 // Seed the Organisation every event is attributed to, from the
@@ -392,6 +414,8 @@ pub fn run() {
                 // it the Timeline board only ever sees them on its 15 s poll.
                 app.state::<commands::capture::CaptureState>()
                     .install_notifier(app.handle().clone());
+                commands::security_scan::attach(app.handle().clone());
+                commands::tips::attach(app.handle().clone());
 
                 let core = app.state::<commands::auth::AuthState>().core();
                 app.state::<commands::capture::CaptureState>()
@@ -556,6 +580,10 @@ pub fn run() {
             commands::comms::comms_reconnect,
             commands::comms::comms_disconnect,
             commands::comms::comms_base_url,
+            commands::org_agent::org_agent_status,
+            commands::org_agent::org_agent_send,
+            commands::org_agent::org_agent_reconnect,
+            commands::org_agent::org_agent_rest,
             commands::spaces::spaces_connect,
             commands::spaces::spaces_disconnect,
             commands::spaces::spaces_cycle,
@@ -577,6 +605,7 @@ pub fn run() {
             commands::auth::auth_delete_org,
             commands::window::window_zoom,
             commands::clipboard::clipboard_file_paths,
+            commands::clipboard::clipboard_paste_paths,
             commands::clipboard::clipboard_write_text,
             commands::clipboard::scratch_write_bytes,
             commands::fonts::list_font_families,
@@ -591,18 +620,13 @@ pub fn run() {
             commands::browser::browser_embed_set_visible,
             commands::browser::browser_embed_destroy,
             commands::terminal::terminal_create,
-            commands::terminal::terminal_zsh_dir,
             commands::terminal::terminal_write,
             commands::terminal::terminal_write_text,
             commands::terminal::terminal_resize,
-            commands::terminal::terminal_kill_foreground,
             commands::terminal::terminal_close,
             commands::terminal::terminal_ack,
             commands::terminal::terminal_resolve_path,
-            commands::terminal::resolve_path,
-            commands::terminal::terminal_path_complete,
-            commands::terminal::terminal_list_commands,
-            commands::fs::read_directory,
+            commands::fs_entries::read_directories,
             commands::fs::read_file_content,
             commands::fs::read_file_base64,
             commands::fs::capture_screenshot,
@@ -619,25 +643,64 @@ pub fn run() {
             commands::fs::fs_copy,
             commands::fs::fs_duplicate,
             commands::fs::fs_open_in_terminal,
+            commands::external_editor::external_editors_detect,
+            commands::external_editor::external_editor_open,
             commands::fs::fs_add_to_gitignore,
-            commands::git::git_status_fresh,
             commands::git::git_log,
-            commands::git::git_diff_all,
             commands::git::git_workspace_summary,
+            commands::git::git_branch_compare,
             commands::usage_dashboard::usage_dashboard,
             commands::capture::capture_session_summary,
             commands::capture::capture_session_files,
             commands::usage_dashboard::usage_export_markdown,
             commands::usage_dashboard::usage_write_file,
             commands::git::git_diff_file,
-            commands::git::git_diff_paths,
             commands::git::git_stage,
             commands::git::git_unstage,
             commands::git::git_list_branches,
             commands::git::git_checkout,
+            commands::git::git_switch_if_clean,
             commands::git::git_create_branch,
             commands::git::git_blame_file,
-            commands::git_pr::git_repo_pull_requests,
+            commands::pull_requests::pr_provider,
+            commands::pull_requests::pr_list,
+            commands::pull_requests::pr_detail,
+            commands::pull_requests::pr_activity,
+            commands::pull_requests::pr_thread_comments,
+            commands::pull_requests::pr_timeline,
+            commands::pull_requests::pr_commits,
+            commands::pull_requests::pr_diff,
+            commands::pull_requests::pr_diff_file_contents,
+            commands::pull_requests::pr_files_viewed,
+            commands::pull_requests::pr_reviewer_candidates,
+            commands::pull_requests::pr_label_candidates,
+            commands::pull_requests::pr_set_files_viewed,
+            commands::pull_requests::pr_comment,
+            commands::pull_requests::pr_reply_to_thread,
+            commands::pull_requests::pr_resolve_thread,
+            commands::pull_requests::pr_react,
+            commands::pull_requests::pr_submit_review,
+            commands::pull_requests::pr_action,
+            commands::pull_requests::pr_update,
+            commands::pull_requests::pr_request_reviewers,
+            commands::pull_requests::pr_set_labels,
+            commands::pull_requests::pr_image,
+            commands::pull_requests::list_stats::pr_list_stats,
+            commands::pull_requests::pr_edit_comment,
+            commands::pull_requests::pr_delete_comment,
+            commands::pull_requests::pr_revert,
+            commands::pull_requests::pr_check_log,
+            commands::pull_requests::create::pr_create_draft,
+            commands::pull_requests::create::pr_create,
+            commands::pull_requests::checkout::pr_prepare_checkout,
+            commands::pull_requests::guide::pr_guide_read,
+            commands::pull_requests::guide::pr_guide_write,
+            commands::pull_requests::guide::pr_guide_prepare,
+            commands::pull_requests::guide::pr_guide_finish,
+            commands::project_scripts::project_scripts_list,
+            commands::project_scripts::project_scripts_save,
+            commands::project_scripts::project_scripts_approve,
+            commands::session_context::session_environment,
             commands::git_avatars::git_repo_avatars,
             commands::git::git_graph_signature,
             commands::git_graph::git_graph_build,
@@ -697,8 +760,27 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_unfollow,
             commands::artifacts_cloud::chat_comment_target,
             commands::artifacts_cloud::artifacts_cloud_session,
+            commands::artifacts_cloud::artifacts_cloud_session_stream,
             commands::artifacts_cloud::artifacts_cloud_payload,
             commands::artifacts_cloud::artifacts_cloud_session_url,
+            commands::artifacts_cloud::artifacts_cloud_inbox,
+            commands::artifacts_cloud::artifacts_cloud_inbox_unread,
+            commands::artifacts_cloud::artifacts_cloud_inbox_read,
+            commands::rc::rc_start,
+            commands::rc::rc_stop,
+            commands::rc::rc_delete,
+            commands::rc::rc_set_title,
+            commands::rc::rc_status,
+            commands::rc::rc_set_scope,
+            commands::rc::rc_set_member_tier,
+            commands::rc::rc_members,
+            commands::rc::rc_invite,
+            commands::rc::rc_revoke_invite,
+            commands::rc::rc_set_accept_requests,
+            commands::rc::rc_take_over,
+            commands::rc::rc_answer_control,
+            commands::rc::rc_grant_control,
+            commands::rc::rc_kick,
             commands::artifacts_cloud::artifacts_cloud_session_share,
             commands::artifacts_cloud::artifacts_cloud_share_create,
             commands::artifacts_cloud::artifacts_cloud_share_revoke,
@@ -710,6 +792,11 @@ pub fn run() {
             commands::artifacts_cloud::artifacts_cloud_comment_delete,
             commands::artifacts_cloud::artifacts_cloud_comment_vote,
             commands::capture::capture_health,
+            commands::security_scan::security_project_sessions,
+            commands::security_scan::security_session_checkpoints,
+            commands::security_scan::security_ship_overview,
+            commands::security_scan::security_finding_line,
+            commands::security_scan::security_set_not_useful,
             commands::capture::capture_import_preview,
             commands::capture::capture_import_confirm,
             commands::capture::capture_slug_available,
@@ -727,6 +814,7 @@ pub fn run() {
             commands::capture::capture_commit_sessions,
             commands::capture::artifacts_board,
             commands::capture::artifacts_checkpoints,
+            commands::capture::artifacts_trace,
             commands::mention_search::mention_search,
             commands::mention_search::mention_cache_set_knowledge,
             commands::mention_search::mention_cache_clear,
@@ -746,10 +834,11 @@ pub fn run() {
             commands::github::fetch_cloned_repo_meta,
             // Legacy Claude-CLI subprocess commands (claude_run/stream/stop/check/version)
             // were replaced by ACP. Session-history readers below are still in use.
-            commands::gitdiff::git_diff_structured,
-            commands::gitdiff::diff_structured_text,
-            commands::gitdiff::git_commit_changed_files,
             commands::gitdiff::git_diff_line_status,
+            commands::diff_preview::git_diff_preview,
+            commands::diff_preview::git_diff_file_contents,
+            commands::diff_preview::git_diff_file_patch,
+            commands::diff_preview::diff_texts_patch,
             commands::code_server::code_grep,
             commands::project_session::save_project_session,
             commands::project_session::load_project_session,
@@ -796,6 +885,11 @@ pub fn run() {
             commands::atlas_config::get_atlas_config_info,
             commands::atlas_config::update_atlas_settings,
             commands::atlas_config::reset_atlas_config,
+            commands::project_icon::project_icon,
+            commands::project_sources::project_sources_info,
+            commands::project_sources::project_browse,
+            commands::project_sources::project_create,
+            commands::project_sources::project_clone,
             commands::project_settings::get_project_settings,
             commands::project_settings::update_project_settings,
             commands::atlas_config::open_atlas_config,
@@ -853,11 +947,36 @@ pub fn run() {
             commands::agents::threads_sync_project,
             commands::agents::threads_projects,
             commands::agents::threads_history,
-            commands::agents::threads_archive,
+            commands::agents::threads_settle,
+            commands::agents::threads_unsettle,
+            commands::agents::threads_pin,
+            commands::agents::threads_unpin,
+            commands::agents::threads_reorder_pin,
+            commands::agents::threads_snooze,
+            commands::agents::threads_wake,
+            commands::agents::threads_unsnooze,
+            commands::agents::threads_rename,
+            commands::agents::threads_mark_viewed,
+            commands::session_projects::session_projects_list,
+            commands::session_projects::session_projects_attach,
+            commands::session_projects::session_projects_detach,
+            commands::session_projects::session_projects_set_access,
+            commands::session_pull_requests::session_pull_requests_link,
+            commands::session_pull_requests::session_pull_requests_unlink,
+            commands::session_pull_requests::session_pull_requests_sync,
+            commands::session_pull_requests::session_pull_requests_watch,
+            commands::agents::threads_mark_unread,
             commands::agents::agents_snapshot,
             commands::agents::agents_snapshot_meta,
             commands::agents::agents_send,
             commands::agents::agents_cancel,
+            commands::agents::agents_queue_add,
+            commands::agents::agents_queue_remove,
+            commands::agents::agents_queue_clear,
+            commands::agents::agents_queue_pause,
+            commands::agents::agents_queue_drain,
+            commands::agents::agents_queue_send_now,
+            commands::agents::agents_set_hold,
             commands::agents::agents_set_mode,
             commands::agents::agents_set_model,
             commands::agents::agents_set_effort,
@@ -895,6 +1014,13 @@ pub fn run() {
             commands::keybindings::keybindings_save,
             commands::keybindings::keybindings_open,
             commands::keybindings::menu_set_accelerators,
+            commands::tips::tips_load,
+            commands::tips::tips_mark_seen,
+            commands::tips::tips_reset,
+            commands::tips::tips_shown,
+            commands::tips::tips_checklist_done,
+            commands::tips::tips_checklist_dismiss,
+            commands::tips::first_run_complete,
             commands::memory_graph::memory_embed_status,
             commands::memory_graph::memory_embed_download,
             commands::memory_graph::memory_index_build,
@@ -977,6 +1103,7 @@ pub fn run() {
             commands::skills::pack_components_list,
             commands::quit_guard::quit_guard_ready,
             commands::quit_guard::quit_guard_answer,
+            commands::app_data_reset::app_data_reset,
         ])
         .build(context)
         .expect("error while building Atlas")

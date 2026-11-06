@@ -14,15 +14,13 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use rig_core::agent::{MultiTurnStreamItem, StreamingResult};
-use rig_core::client::completion::CompletionClient;
 use rig_core::message::Message as RigMessage;
-use rig_core::providers::{anthropic, gemini, openai};
-use rig_core::streaming::{StreamedAssistantContent, StreamingChat};
+use rig_core::operation::Completion;
+use rig_core::streaming::{Item, StreamEvent, Streamed};
 use tauri::AppHandle;
 
 use super::byok;
-use super::modelchat::{provider_endpoint, ApiKind};
+use super::modelchat::{build_model, provider_endpoint, start_stream};
 
 /// Hard cap on a single summarization call. Belt-and-suspenders: the caller in
 /// `agents_send` also wraps the whole build+summarize path in its own budget.
@@ -80,44 +78,21 @@ pub(crate) async fn run_completion(
         .ok_or_else(|| format!("No API key configured for {provider}"))?;
     let prompt = RigMessage::user(prompt_text);
 
-    match api {
-        ApiKind::OpenAi => {
-            let client = openai::CompletionsClient::builder()
-                .api_key(&key)
-                .base_url(base)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, Vec::<RigMessage>::new()).await;
-            collect_text(&mut stream).await
-        }
-        ApiKind::Anthropic => {
-            let client = anthropic::Client::builder()
-                .api_key(&key)
-                .build()
-                .map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, Vec::<RigMessage>::new()).await;
-            collect_text(&mut stream).await
-        }
-        ApiKind::Google => {
-            let client = gemini::Client::new(&key).map_err(|e| e.to_string())?;
-            let agent = client.agent(model).build();
-            let mut stream = agent.stream_chat(prompt, Vec::<RigMessage>::new()).await;
-            collect_text(&mut stream).await
-        }
-    }
+    let model = build_model(api, base, &key, model);
+    let stream = start_stream(&model, prompt, Vec::<RigMessage>::new())?;
+    collect_text(stream).await
 }
 
 /// Drain a Rig stream into a single string (text deltas only).
-async fn collect_text<R>(stream: &mut StreamingResult<R>) -> Result<String, String> {
+async fn collect_text(mut stream: Streamed<Completion>) -> Result<String, String> {
     let mut buf = String::new();
     while let Some(item) = stream.next().await {
-        if let MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t)) =
-            item.map_err(|e| e.to_string())?
-        {
-            buf.push_str(&t.text);
+        if let Item::Event(StreamEvent::Text { text, .. }) = item.map_err(|e| e.to_string())? {
+            buf.push_str(&text);
         }
     }
+    // A reply cut before the provider's terminal record is `Truncated` here;
+    // fail so `summarize` falls back to raw text instead of a partial summary.
+    stream.finish().await.map_err(|e| e.to_string())?;
     Ok(buf)
 }

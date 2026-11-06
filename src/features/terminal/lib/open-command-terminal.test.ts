@@ -238,7 +238,9 @@ describe("useCommandTerminalPresence", () => {
     // about is no longer on screen.
     const opened = openCommandTerminal("agent login", "Sign in")!;
     const { result, rerender } = renderHook(() => useCommandTerminalPresence(opened));
-    show("main", "editor:a.ts");
+    // A terminal opens in the surfaces pane, never the main column.
+    const tab = useLayoutStore.getState().tabs.find((t) => t.id === opened.tabId)!;
+    show(tab.groupId ?? "main", "editor:a.ts");
     rerender();
     expect(result.current).toBe("hidden");
   });

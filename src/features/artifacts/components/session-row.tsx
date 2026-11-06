@@ -15,8 +15,9 @@
  * opening it. These are the facts you pick a Session *by*.
  */
 
+import { DiffStat } from "@tryatlas/design";
 import { GitBranch, MessageSquare } from "lucide-react";
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
 import { cn } from "@/lib/utils";
 import type { BoardSession } from "../types";
@@ -25,8 +26,12 @@ import { authorOf, type AuthorDirectory } from "../lib/author-directory";
 import { hueFor } from "../lib/hue";
 import { AgentGlyph } from "./agent-glyph";
 import { SessionStatusIcon, STATE_LABEL } from "./session-status-icon";
+import { SessionSecurityBadge } from "@/features/security/components/session-security-badge";
 
-export function SessionRow({
+/** Memoized, and handed the board's one `onOpen` rather than a closure per
+ *  row: the calendar re-renders its rows on every scroll frame, and an
+ *  unchanged row need not rebuild its lines, marks and avatar each time. */
+export const SessionRow = memo(function SessionRow({
   session: s,
   directory,
   selected,
@@ -35,7 +40,7 @@ export function SessionRow({
   session: BoardSession;
   directory: AuthorDirectory;
   selected: boolean;
-  onOpen: () => void;
+  onOpen: (session: BoardSession) => void;
 }) {
   const state = sessionState(s);
   const who = authorOf(s.authorId, directory);
@@ -48,13 +53,15 @@ export function SessionRow({
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => onOpen(s)}
       aria-pressed={selected}
       className={cn(
-        // Wider than its column so the hover background reaches past the text
-        // on both sides — a row highlight that stops at the glyph reads as a
-        // box around the words rather than as the row being pointed at.
-        "-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-start gap-2.5 rounded-lg px-2 py-2.5 text-left",
+        // Exactly as wide as the hairlines between rows, inside them with a
+        // little air above and below (the row's wrapper in
+        // `@tryatlas/design` TimelineCalendar). It used to overhang the hairlines by 8px a
+        // side, so a selected row's rounded corners stuck out past the rules
+        // and butted against the one above it.
+        "flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 text-left",
         "transition-colors duration-fast ease-out-strong hover:bg-element-hover",
         selected && "bg-element-selected hover:bg-element-selected",
       )}
@@ -108,11 +115,12 @@ export function SessionRow({
           }
           right={
             <span className="flex items-center gap-2">
+              <SessionSecurityBadge projectPath={s.projectPath} sessionId={s.id} />
               <span className="shrink-0">{checkpoints}</span>
               {s.insertions + s.deletions > 0 && (
                 <>
                   <Dot />
-                  <DiffStat added={s.insertions} removed={s.deletions} />
+                  <DiffStat added={s.insertions} removed={s.deletions} className="shrink-0" />
                 </>
               )}
             </span>
@@ -121,7 +129,7 @@ export function SessionRow({
       </span>
     </button>
   );
-}
+});
 
 /** One row line: content on the left, one item pinned right. */
 function Line({ left, right }: { left: ReactNode; right?: ReactNode }) {
@@ -135,7 +143,7 @@ function Line({ left, right }: { left: ReactNode; right?: ReactNode }) {
 
 function Dot() {
   return (
-    <span aria-hidden className="text-[var(--atlas-text-disabled)]">
+    <span aria-hidden className="text-disabled">
       ·
     </span>
   );
@@ -145,7 +153,6 @@ function Dot() {
 function joinDots(parts: (ReactNode | false | null | undefined)[]): ReactNode {
   const kept = parts.filter(Boolean) as ReactNode[];
   return kept.map((part, i) => (
-    // eslint-disable-next-line react/no-array-index-key -- the parts are fixed
     <Fragment key={i}>
       {i > 0 && <Dot />}
       {part}
@@ -174,17 +181,6 @@ export function ProjectMark({ name, className }: { name: string; className?: str
     >
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", hueFor(name))} />
       <span className="truncate">{name}</span>
-    </span>
-  );
-}
-
-/** A +/− pair. Tabular, so the column does not jitter between rows. */
-export function DiffStat({ added, removed }: { added: number; removed: number }) {
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-2xs tabular-nums">
-      <span className="text-[var(--atlas-diff-added-text)]">+{added}</span>
-      {/* U+2212 MINUS, not a hyphen: it lines up with the plus. */}
-      <span className="text-[var(--atlas-diff-removed-text)]">−{removed}</span>
     </span>
   );
 }

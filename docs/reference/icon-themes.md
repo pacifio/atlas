@@ -178,7 +178,7 @@ above for every theme whose light section is partial. They all are.
 ### Language ids
 
 `languageIds` is matched against the **editor's own** language id for the path
-(`src/features/editor/lib/languages.ts`). There is deliberately no second
+(`src/features/icon-theme/lib/language-id.ts`). There is deliberately no second
 language table: a file the editor calls `rust` is the file an icon theme's
 `"rust"` entry matches. A path the editor cannot identify sends no language id
 at all rather than sending `plaintext`.

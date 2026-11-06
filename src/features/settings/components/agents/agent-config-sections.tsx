@@ -1,6 +1,6 @@
 // The editor sections that write an agent's own settings through
 // `agents_configure`: its name, what it needs to sign in, how it runs, and its
-// environment. T3 Code's provider editor, on Atlas's installed-agents map.
+// environment, on Atlas's installed-agents map.
 //
 // The well-known agents get named fields from their profile
 // (`agent-profiles.ts`); each is a view onto one environment variable, so the
@@ -12,14 +12,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { openFileAs } from "@/lib/open-file";
 import { tildePath } from "@/lib/paths";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { SecretInput } from "@/ui/secret-input";
-import { Select } from "@/ui/select";
-import { Switch } from "@/ui/switch";
-import { Hint } from "@/ui/tooltip";
 import {
   claimedVariables,
   configFilePath,
@@ -40,6 +32,16 @@ import {
   parseArgs,
   type AgentItem,
 } from "./agent-install";
+import {
+  Button,
+  Icon,
+  IconButton,
+  Input,
+  SecretInput,
+  Select,
+  Switch,
+  Hint,
+} from "@tryatlas/design";
 
 /** A text field that saves on Enter or when it loses focus, not per keystroke:
  *  each save rewrites the installed-agents map. Escape reverts, and so does
@@ -118,7 +120,7 @@ export function IdentityRow({ item }: { item: AgentItem }) {
 }
 
 /** One profile field. Text-like fields sit full width under their
- *  description, the way T3 lays out a provider's runtime fields. */
+ *  description, as a provider's runtime fields are laid out. */
 function ProfileFieldRow({ item, field }: { item: AgentItem; field: ProfileField }) {
   const variables = item.catalog?.launch?.variables ?? [];
   const value = readField(variables, field);
@@ -235,7 +237,8 @@ function ConfigFileRow({
   const name = file.name.split("/").pop() ?? file.name;
   const open = async () => {
     try {
-      openFileAs(await agentConfig.openConfigFile(path, file.empty), "text");
+      // A settings file is opened to be set: for editing.
+      openFileAs(await agentConfig.openConfigFile(path, file.empty), "text", { edit: true });
     } catch (e) {
       toast.error(`Couldn't open ${name}: ${String(e)}`);
     }
@@ -420,7 +423,7 @@ export function EnvironmentSection({ item }: { item: AgentItem }) {
     if (incoming === published.current) return;
     setRows(toRows(generic));
     // `generic` is derived from the catalog; its signature is the dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming]);
 
   if (!launch || item.state !== "installed") return null;

@@ -1,5 +1,5 @@
 // An agent's models in Settings → Agents: star, hide, reorder, and add a model
-// by id. T3 Code's ProviderModelsSection, on what an ACP agent advertises.
+// by id, on what an ACP agent advertises.
 //
 // An agent states its models in a session, so the list is the last one it
 // gave (`acp-models-cache`); before its first chat only the user's own custom
@@ -9,12 +9,6 @@
 import { forwardRef, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Star, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Switch } from "@/ui/switch";
-import { Hint } from "@/ui/tooltip";
 import { arrangeModels, type ArrangedModel } from "@/features/agents/lib/agent-models";
 import { profileFor } from "@/features/agents/lib/agent-profiles";
 import { favoriteKey, useModelFavorites } from "@/features/chat/lib/model-favorites";
@@ -26,8 +20,9 @@ import {
 } from "../../stores/model-pricing-store";
 import { SettingsGroup, SettingsSection } from "../layout/settings-layout";
 import { configureAgent, type AgentItem } from "./agent-install";
+import { Button, Icon, IconButton, Input, Switch, Hint } from "@tryatlas/design";
 
-/** A starred model's star, filled like T3's. */
+/** A starred model's star, filled. */
 const StarFilled: LucideIcon = forwardRef((props, ref) => (
   <Star ref={ref} {...props} fill="currentColor" />
 ));

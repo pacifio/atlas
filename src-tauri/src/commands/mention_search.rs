@@ -160,6 +160,7 @@ fn matches_scope(scope: Option<&str>, kind: &str) -> bool {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command takes its state as arguments
 pub async fn mention_search(
     query: String,
     scope: Option<String>,

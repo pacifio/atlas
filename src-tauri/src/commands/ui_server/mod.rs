@@ -62,7 +62,7 @@ pub fn action_event(request: &UiRequest) -> &'static str {
     }
 }
 
-/// Whether the user lets Atlas Agent act on the window (Settings → General →
+/// Whether the user lets Atlas Agent act on the window (Settings → Agents →
 /// "Let Atlas Agent navigate the app"). Checked when a session is offered the
 /// server and on every call, so switching it off stops the agent at once.
 /// Given the session's launch directory: the setting can be overridden per

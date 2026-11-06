@@ -8,54 +8,50 @@
 
 import type { Binding, CaptureHealth } from "../types";
 import { cn } from "@/lib/utils";
+import { captureIndicator } from "../lib/capture-indicator";
 
 /**
- * The recording dot: a small green pulse while capture is live.
+ * The recording dot: the success tone while capture is live.
  *
- * Green and *moving* is the whole signal — a static coloured dot in a titlebar
- * reads as a status LED nobody looks at twice, and the point of this one is to
- * be noticed once and then ignored. The pulse is a second ring behind the dot
- * rather than an opacity animation on the dot itself, so the core stays at full
- * strength and only the halo breathes; a fading dot looks like a rendering bug.
+ * A steady dot, not a pulsing one: capture is often on for hours, and a
+ * blinking light in the bar for all of that time pulls the eye every time it
+ * moves. It is there to be checked, not to call out.
+ *
+ * The shape carries the state as well as the tone, so it reads without
+ * colour: a solid dot is a recorder that is on (capturing, or faulted in the
+ * warning or error tone), a hollow ring is one that is not (neutral).
  *
  * The wrapper is a fixed-size grid cell, which is what keeps it on the text
- * baseline's centre line: sizing the ring off the dot made the flex line box
- * taller than the dot and pushed it visibly off-centre.
+ * baseline's centre line.
  */
 export function CaptureDot({
-  live,
   tone = "success",
 }: {
-  /** Pulsing only while capture is actually running. */
-  live: boolean;
-  tone?: "success" | "warning" | "error" | "idle";
+  tone?: "success" | "warning" | "error" | "neutral";
 }) {
-  const color =
-    tone === "error"
-      ? "var(--atlas-status-error-foreground)"
-      : tone === "warning"
-        ? "var(--atlas-status-warning-foreground)"
-        : tone === "idle"
-          ? "var(--atlas-text-disabled)"
-          : "var(--atlas-status-success-foreground)";
-
   return (
-    <span className="relative grid size-[10px] shrink-0 place-items-center" aria-hidden>
-      {live && (
-        <span
-          className="absolute size-[10px] animate-ping rounded-full opacity-40"
-          style={{ backgroundColor: color, animationDuration: "1.8s" }}
-        />
-      )}
-      <span className="relative size-[5px] rounded-full" style={{ backgroundColor: color }} />
+    <span className="relative grid size-2.5 shrink-0 place-items-center" aria-hidden>
+      <span
+        className={cn(
+          "relative size-1.5 rounded-full",
+          tone === "error"
+            ? "bg-error"
+            : tone === "warning"
+              ? "bg-warning"
+              : tone === "neutral"
+                ? "border border-current bg-transparent text-disabled"
+                : "bg-success",
+        )}
+      />
     </span>
   );
 }
 
 /**
- * The titlebar dot. Green while capturing; a fault keeps its own colour, since
- * painting a stopped recorder green would be the one lie this indicator cannot
- * afford.
+ * The titlebar dot. The success tone while capturing; a fault keeps its own
+ * tone, since painting a stopped recorder green would be the one lie this
+ * indicator cannot afford. The tone is `captureIndicator`'s, the model the
+ * popover radar's label reads too.
  */
 export function StatusDot({
   binding,
@@ -64,18 +60,11 @@ export function StatusDot({
   binding: Binding | null;
   health: CaptureHealth | null;
 }) {
-  const tone =
-    health?.state === "stopped"
-      ? "error"
-      : health?.state === "degraded"
-        ? "warning"
-        : binding?.enabled
-          ? "success"
-          : "idle";
+  const { tone } = captureIndicator(binding, health);
 
   return (
-    <span className={cn("flex items-center", tone === "idle" && "opacity-70")}>
-      <CaptureDot live={!!binding?.enabled && tone === "success"} tone={tone} />
+    <span className={cn("flex items-center", tone === "neutral" && "opacity-70")}>
+      <CaptureDot tone={tone} />
     </span>
   );
 }

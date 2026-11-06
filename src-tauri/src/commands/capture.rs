@@ -477,12 +477,35 @@ type BackoffMap = Arc<Mutex<HashMap<PathBuf, DrainBackoff>>>;
 /// So: exactly one writer per root, shared. Reads do not come through here at
 /// all — they open their own connection via [`Store::open_reader`], so listing
 /// Sessions never waits behind a long import.
-type StoreRegistry = Arc<Mutex<HashMap<PathBuf, StoreHandle>>>;
+pub(crate) type StoreRegistry = Arc<Mutex<HashMap<PathBuf, StoreHandle>>>;
+
+/// A Project's shared store as this process opened it, and whether this
+/// process holds its writer lock. `None` when the Project was never opened
+/// here: the security scanner only ever scans what capture already opened,
+/// so it never creates a `.atlas/` of its own.
+pub(crate) fn registered_store(
+    stores: &StoreRegistry,
+    root: &Path,
+) -> Option<(Arc<Mutex<Store>>, bool)> {
+    lock_ok(stores)
+        .get(root)
+        .map(|h| (h.store.clone(), h.is_writer))
+}
+
+/// [`CaptureState::writer`] against a registry handed off the async runtime.
+pub(crate) fn writer_in(stores: &StoreRegistry, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+    Ok(open_in(stores, root)?.store)
+}
+
+/// Every Project root this process has a store open for.
+pub(crate) fn registered_roots(stores: &StoreRegistry) -> Vec<PathBuf> {
+    lock_ok(stores).keys().cloned().collect()
+}
 
 /// A shared store, plus the one fact about it that must be readable without
 /// waiting for whatever is currently using it.
 #[derive(Clone)]
-struct StoreHandle {
+pub(crate) struct StoreHandle {
     store: Arc<Mutex<Store>>,
     /// Whether this process took the Project's writer lock, cached at open
     /// time. A status read must be able to answer this while the worker is
@@ -505,6 +528,7 @@ impl CaptureState {
         let notify_for_worker = notify.clone();
         let stores: StoreRegistry = Arc::new(Mutex::new(HashMap::new()));
         let stores_for_worker = stores.clone();
+        super::security_scan::start(stores.clone());
         let worker_alive = Arc::new(AtomicBool::new(true));
         let alive_for_worker = worker_alive.clone();
         // Unbounded on purpose. A bounded channel would have to choose between
@@ -563,8 +587,14 @@ impl CaptureState {
     /// Every write path — binding, promotion, the worker's own jobs — must go
     /// through this. Opening a second `Store` on the same root inside this
     /// process is what produced the phantom "another Atlas window" error.
-    fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
-        Ok(open_in(&self.stores, root)?.store)
+    pub(crate) fn writer(&self, root: &Path) -> Result<Arc<Mutex<Store>>, String> {
+        writer_in(&self.stores, root)
+    }
+
+    /// The open stores, for a command that opens its writer inside
+    /// `spawn_blocking` (the first open migrates the database).
+    pub(crate) fn registry(&self) -> StoreRegistry {
+        self.stores.clone()
     }
 
     /// This process's claim on the Project's writer lock.
@@ -2321,6 +2351,302 @@ pub async fn artifacts_checkpoints(projects: Vec<String>) -> Result<Vec<BoardChe
     .map_err(|e| e.to_string())?
 }
 
+/// Most commit subjects one Trace read asks git for, per Project.
+///
+/// One process spawn each, for shas not already in [`trace_subjects`]. A dense
+/// week is a few hundred Checkpoints; past this the rest render by sha rather
+/// than stalling the read.
+const TRACE_SUBJECT_LIMIT: usize = 300;
+
+/// Commit subjects already read from git, by repository and sha — `None`
+/// where git had no
+/// such commit (gc'd, rewritten away), so a dead sha is not asked about again
+/// on every read and does not spend the budget the live ones need.
+///
+/// The Trace re-reads as the board refreshes, and a commit's subject never
+/// changes, so asking git again each time would be the same few hundred
+/// process spawns to learn nothing. Cleared wholesale past a size bound rather
+/// than evicted: it refills from the next read. Never held across a spawn.
+fn trace_subjects() -> &'static Mutex<HashMap<String, Option<String>>> {
+    use std::sync::OnceLock;
+    static SUBJECTS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    SUBJECTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const TRACE_SUBJECT_CACHE_MAX: usize = 20_000;
+
+/// Subjects for `shas` in `root`, from the cache or from git — spending at
+/// most `budget` new asks, shared across every project one read covers.
+fn trace_subjects_for(
+    root: &Path,
+    shas: &[String],
+    budget: &mut usize,
+) -> HashMap<String, Option<String>> {
+    // Keyed by repository too: two checkouts can disagree about a sha (one has
+    // fetched it, one has not), and a miss in one must not hide it in the other.
+    let key = |sha: &str| format!("{}\0{sha}", root.display());
+    let mut subjects: HashMap<String, Option<String>> = HashMap::new();
+    let mut misses: Vec<String> = Vec::new();
+    {
+        let cache = trace_subjects()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for sha in shas {
+            if subjects.contains_key(sha) {
+                continue;
+            }
+            match cache.get(&key(sha)) {
+                Some(known) => {
+                    subjects.insert(sha.clone(), known.clone());
+                }
+                None => {
+                    // Reserve the slot so a repeated sha is asked once.
+                    subjects.insert(sha.clone(), None);
+                    misses.push(sha.clone());
+                }
+            }
+        }
+    }
+    // Asked unlocked, so one slow repository does not stall another read.
+    let asks = misses.len().min(*budget);
+    *budget -= asks;
+    let found: Vec<(String, Option<String>)> = misses
+        .into_iter()
+        .take(asks)
+        .map(|sha| {
+            let subject = atlas_checkpoint::git::commit_info(root, &sha)
+                .ok()
+                .map(|info| info.subject);
+            (sha, subject)
+        })
+        .collect();
+    let mut cache = trace_subjects()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.len() > TRACE_SUBJECT_CACHE_MAX {
+        cache.clear();
+    }
+    for (sha, subject) in found {
+        cache.insert(key(&sha), subject.clone());
+        subjects.insert(sha, subject);
+    }
+    subjects
+}
+
+fn parse_instant(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|t| t.with_timezone(&chrono::Utc))
+}
+
+/// This machine's half of the trace: every local Session active in the window,
+/// in the server's shape, with its Checkpoints and their git subjects.
+///
+/// Read whether or not the Project is synced, so the Trace works offline and
+/// before the server half is reachable; the renderer folds the two halves,
+/// one row per Session id. The second half of the answer names each project
+/// that could not be read, for the page's notes.
+fn local_trace(
+    projects: Vec<String>,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> (Vec<atlas_artifacts::TraceSession>, Vec<String>) {
+    // `sessionState`'s window on the renderer: written within 90 s is live.
+    const LIVE_WINDOW: chrono::TimeDelta = chrono::TimeDelta::seconds(90);
+    let now = chrono::Utc::now();
+    let mut out = Vec::new();
+    let mut notes = Vec::new();
+    let mut budget = TRACE_SUBJECT_LIMIT;
+    for project_path in projects {
+        // One unreadable store must not blank the whole trace — but it is
+        // named, so its absence does not read as a project with no work.
+        let unreadable = || format!("This machine's sessions in {project_path} could not be read.");
+        let store = match open_reader(&project_path) {
+            // Never captured here: nothing to read, nothing to say.
+            Ok(None) => continue,
+            Ok(Some(store)) => store,
+            Err(_) => {
+                notes.push(unreadable());
+                continue;
+            }
+        };
+        let root = Path::new(&project_path).to_path_buf();
+        let workspace_id = project_id_for(&root);
+        let Ok(summaries) = atlas_checkpoint::session_summaries(&store, &workspace_id) else {
+            notes.push(unreadable());
+            continue;
+        };
+        let remote_id = store
+            .binding()
+            .ok()
+            .flatten()
+            .and_then(|b| b.remote_workspace_id)
+            .unwrap_or_default();
+
+        let mut by_session: HashMap<String, Vec<atlas_checkpoint::Checkpoint>> = HashMap::new();
+        for c in store
+            .checkpoints_for_project(&workspace_id)
+            .unwrap_or_default()
+        {
+            if c.created_at >= from && c.created_at <= to {
+                by_session.entry(c.session_id.clone()).or_default().push(c);
+            }
+        }
+        let subjects = if atlas_checkpoint::git::is_repository(&root) {
+            let mut shas: Vec<(chrono::DateTime<chrono::Utc>, String)> = by_session
+                .values()
+                .flatten()
+                .map(|c| (c.created_at, c.commit_sha.clone()))
+                .collect();
+            // Newest first, so the subject budget goes to the recent end.
+            shas.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+            let shas: Vec<String> = shas.into_iter().map(|(_, sha)| sha).collect();
+            trace_subjects_for(&root, &shas, &mut budget)
+        } else {
+            HashMap::new()
+        };
+
+        for s in summaries {
+            let (Some(started), Some(last)) = (
+                parse_instant(&s.started_at),
+                parse_instant(&s.last_activity_at),
+            ) else {
+                continue;
+            };
+            let live = s.source != "external_jsonl"
+                && parse_instant(&s.updated_at).is_some_and(|u| now - u < LIVE_WINDOW);
+            if started > to || (!live && last < from) {
+                continue;
+            }
+            let mut checkpoints = by_session.remove(&s.id).unwrap_or_default();
+            checkpoints.sort_by_key(|c| c.created_at);
+            out.push(atlas_artifacts::TraceSession {
+                workspace_id: remote_id.clone(),
+                author_id: None,
+                title: s.title,
+                agent: s.agent,
+                source: Some(s.source),
+                started_at: s.started_at,
+                last_activity_at: s.last_activity_at,
+                live,
+                checkpoints: checkpoints
+                    .into_iter()
+                    .map(|c| atlas_artifacts::TraceCheckpoint {
+                        commit_subject: subjects.get(&c.commit_sha).cloned().flatten(),
+                        id: c.id,
+                        session_id: c.session_id,
+                        at: c.created_at.to_rfc3339(),
+                        author_id: None,
+                        commit_sha: c.commit_sha,
+                        branch: c.branch,
+                        link_state: match c.link_state {
+                            atlas_checkpoint::LinkState::Orphaned => "orphaned",
+                            atlas_checkpoint::LinkState::Linked => "linked",
+                        }
+                        .to_string(),
+                        insertions: c.insertions,
+                        deletions: c.deletions,
+                        files: c.files_touched.len() as i64,
+                    })
+                    .collect(),
+                project_path: Some(project_path.clone()),
+                id: s.id,
+                ..Default::default()
+            });
+        }
+    }
+    (out, notes)
+}
+
+/// One page of the Timeline's Trace: the Sessions active between `from` and
+/// `to`, each with its Checkpoints, in the server's `GET /sessions/trace`
+/// shape.
+///
+/// Two halves, like the board. The Organisation's comes from the server, one
+/// page per call — `cursor` continues it, and `workspace` is sent only when
+/// the board is narrowed to a Project (the whole Organisation leaves it out).
+/// This machine's comes with the first page only, read from disk, and carries
+/// the commit subjects the server cannot. A server half that cannot be read
+/// says so in `notes` and the local half is still answered.
+#[tauri::command]
+pub async fn artifacts_trace(
+    projects: Vec<String>,
+    filter: Option<BoardFilter>,
+    from: String,
+    to: String,
+    cursor: Option<String>,
+    app: AppHandle,
+) -> Result<atlas_artifacts::TracePage, String> {
+    let from_at = parse_instant(&from).ok_or("bad `from`: not RFC 3339")?;
+    let to_at = parse_instant(&to).ok_or("bad `to`: not RFC 3339")?;
+    let first_page = cursor.is_none();
+
+    // Scope, as the board reads it: a remote filter has no checkout to read.
+    let local_projects = match &filter {
+        None => projects,
+        Some(BoardFilter::Local(path)) => vec![path.clone()],
+        Some(BoardFilter::Remote(_)) => Vec::new(),
+    };
+    // The server Workspace a local filter names, if its checkout is bound.
+    let bound_workspace = match &filter {
+        Some(BoardFilter::Local(path)) => {
+            let path = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                open_reader(&path)
+                    .ok()
+                    .flatten()
+                    .and_then(|store| store.binding().ok().flatten())
+                    .and_then(|b| b.remote_workspace_id)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        _ => None,
+    };
+    // `None` = the whole Organisation; `Some(None)` = narrowed to a Project
+    // the server has never heard of, so there is no remote half to read.
+    let workspace: Option<Option<String>> = match &filter {
+        None => None,
+        Some(BoardFilter::Remote(id)) => Some(Some(id.clone())),
+        Some(BoardFilter::Local(_)) => Some(bound_workspace),
+    };
+
+    // The local half reads disk while the server half is on the network.
+    let local = first_page.then(|| {
+        tauri::async_runtime::spawn_blocking(move || local_trace(local_projects, from_at, to_at))
+    });
+
+    let mut page = atlas_artifacts::TracePage {
+        from: from.clone(),
+        to: to.clone(),
+        ..Default::default()
+    };
+    let cloud = app
+        .try_state::<crate::commands::artifacts_cloud::ArtifactsCloudState>()
+        .and_then(|state| state.org_id().map(|org| (Arc::clone(&state.client), org)));
+    if let (Some((client, org_id)), false) = (cloud, matches!(workspace, Some(None))) {
+        let query = atlas_artifacts::TraceQuery {
+            from: &from,
+            to: &to,
+            workspace_id: workspace.as_ref().and_then(|w| w.as_deref()),
+            cursor: cursor.as_deref(),
+        };
+        match client.trace_page(&org_id, query).await {
+            Ok(remote) => page = remote,
+            Err(e) => page
+                .notes
+                .push(format!("The Organisation's trace could not be read: {e}")),
+        }
+    }
+
+    if let Some(local) = local {
+        let (sessions, notes) = local.await.map_err(|e| e.to_string())?;
+        page.sessions.extend(sessions);
+        page.notes.extend(notes);
+    }
+    Ok(page)
+}
+
 /// One Session that produced a commit.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3348,12 +3674,16 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
         // what it already recorded.
         if capturing && !mid_rewrite {
             match atlas_checkpoint::walk_new_commits(store, workspace_id, &root, mode) {
-                Ok(outcome) if outcome.checkpoints_created > 0 => tracing::info!(
-                    target: "atlas::capture",
-                    commits = outcome.commits_seen,
-                    checkpoints = outcome.checkpoints_created,
-                    "linked commits to sessions"
-                ),
+                Ok(outcome) if outcome.checkpoints_created > 0 => {
+                    tracing::info!(
+                        target: "atlas::capture",
+                        commits = outcome.commits_seen,
+                        checkpoints = outcome.checkpoints_created,
+                        "linked commits to sessions"
+                    );
+                    super::security_scan::nudge(&root);
+                    super::tips::checkpoint_linked();
+                }
                 Ok(outcome) if outcome.cursor_recovered => tracing::warn!(
                     target: "atlas::capture",
                     project = %root.display(),
@@ -3501,12 +3831,17 @@ fn process_job(job: Job, session_ids: &mut HashMap<String, String>, stores: &Sto
 
     if !link_after.is_empty() {
         match atlas_checkpoint::link_commits(store, &key.workspace_id, &root, &link_after, mode) {
-            Ok(created) if created > 0 => tracing::info!(
-                target: "atlas::capture",
-                commits = link_after.len(),
-                created,
-                "linked the commits a shell call made itself"
-            ),
+            Ok(created) if created > 0 => {
+                tracing::info!(
+                    target: "atlas::capture",
+                    commits = link_after.len(),
+                    created,
+                    "linked the commits a shell call made itself"
+                );
+                // An agent's own `git commit` lands here, not in the walk.
+                super::security_scan::nudge(&root);
+                super::tips::checkpoint_linked();
+            }
             Ok(_) => {}
             Err(e) => tracing::warn!(
                 target: "atlas::capture",
@@ -4363,6 +4698,11 @@ impl OutboundMiddleware<SessionDeltaEnvelope> for CaptureMiddleware {
                 state.flush_session_end(&envelope.session_id, &binding);
             }
 
+            // The prompt is recorded from the send path (`note_prompt`, via the
+            // host's prompt hooks), with exactly the text the agent was sent.
+            // Its `user_message` echo would record it twice.
+            SessionDelta::UserMessage { .. } => {}
+
             _ => {}
         }
     }
@@ -4474,6 +4814,8 @@ mod diff_path_tests {
             raw_output: None,
             content_blocks: blocks,
             parent_tool_call_id: None,
+            started_at_ms: None,
+            ended_at_ms: None,
         }
     }
 
@@ -4519,6 +4861,8 @@ mod diff_path_tests {
             raw_output: None,
             content_blocks: Vec::new(),
             parent_tool_call_id: None,
+            started_at_ms: None,
+            ended_at_ms: None,
         }
     }
 

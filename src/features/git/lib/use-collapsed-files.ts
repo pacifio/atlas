@@ -21,7 +21,7 @@ export function useCollapsedFiles(paths: readonly string[]) {
       setCollapsed((current) => new Set([...current, ...fresh]));
     }
     // `key` stands for `paths`, which is a fresh array on every parse.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [key, collapseNew]);
   return [collapsed, setCollapsed] as const;
 }

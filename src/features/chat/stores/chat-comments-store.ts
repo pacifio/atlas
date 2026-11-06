@@ -211,6 +211,12 @@ export function useCommentBucket(tabId: string, chatKey: string): Comment[] | un
   return useChatCommentsStore((s) => s.byTab[tabId]?.byChatKey[chatKey]);
 }
 
+/** Whether the tab's session is in the cloud — the only kind that takes
+ *  comments. What decides whether a cite may "Share with team". */
+export function useHasCloudTarget(tabId: string): boolean {
+  return useChatCommentsStore((s) => s.byTab[tabId]?.target !== null && !!s.byTab[tabId]?.target);
+}
+
 /**
  * Visible comments across a set of chat rows — what a folded tool sequence
  * shows on its summary line.

@@ -597,7 +597,9 @@ mod tests {
             Arc::new(move |c: &MemoryChanged| heard.lock().push(c.clone()))
         });
 
-        let preview = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let preview = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert_eq!(
             kinds(&preview),
             [
@@ -638,7 +640,9 @@ mod tests {
             let heard = heard.clone();
             Arc::new(move |c: &MemoryChanged| heard.lock().push(c.clone()))
         });
-        let preview = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let preview = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         // The user unticks the dashboard line.
         let ids: Vec<String> = preview
             .lines
@@ -686,10 +690,12 @@ mod tests {
     #[test]
     fn a_file_added_after_an_import_is_offered_again() {
         let (store, p, dir) = (SharedMemoryStore::new(), project(), sample());
-        let first = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let first = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         let ids: Vec<String> = first.lines.iter().map(|l| l.id.clone()).collect();
         store
-            .claude_import_confirm(&p, &[dir.clone()], &ids[..1])
+            .claude_import_confirm(&p, std::slice::from_ref(&dir), &ids[..1])
             .unwrap();
         std::fs::write(
             dir.join("ci.md"),
@@ -715,17 +721,21 @@ mod tests {
         let (store, p, dir) = (SharedMemoryStore::new(), project(), sample());
         let ids =
             |pv: &ClaudeImportPreview| pv.lines.iter().map(|l| l.id.clone()).collect::<Vec<_>>();
-        let first = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let first = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert_eq!(
             store
-                .claude_import_confirm(&p, &[dir.clone()], &ids(&first))
+                .claude_import_confirm(&p, std::slice::from_ref(&dir), &ids(&first))
                 .unwrap(),
             5
         );
         let forgotten = store.entries(&p)[0].id;
         store.forget_entry(&p, forgotten).unwrap();
 
-        let second = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let second = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert!(second.already_imported);
         assert!(second.lines.iter().all(|l| !l.is_new), "{:?}", second.lines);
         assert_eq!(
@@ -773,7 +783,9 @@ mod tests {
         // with Atlas's envelope still around the prompt.
         let dir = claude_dir(&[("recycled.md", "project", "", &injected)]);
 
-        let preview = store.claude_import_preview(&p, &[dir.clone()]).unwrap();
+        let preview = store
+            .claude_import_preview(&p, std::slice::from_ref(&dir))
+            .unwrap();
         assert_eq!(preview.lines.len(), 1);
         let line = &preview.lines[0];
         assert_eq!(line.content, "The team prefers bun over npm.");
@@ -825,7 +837,7 @@ mod tests {
         let (store, p, dir) = (SharedMemoryStore::new(), project(), sample());
         assert_eq!(
             store
-                .claude_import_confirm(&p, &[dir.clone()], &[])
+                .claude_import_confirm(&p, std::slice::from_ref(&dir), &[])
                 .unwrap(),
             0
         );
@@ -840,7 +852,7 @@ mod tests {
         let (store, p) = (SharedMemoryStore::new(), project());
         let old = claude_dir(&[("a.md", "user", "Prefers small PRs", "")]);
         store
-            .claude_import_confirm(&p, &[old.clone()], &["nothing-kept".into()])
+            .claude_import_confirm(&p, std::slice::from_ref(&old), &["nothing-kept".into()])
             .unwrap();
         let fresh = claude_dir(&[("b.md", "user", "Prefers small PRs", "")]);
         let preview = store.claude_import_preview(&p, &[old, fresh]).unwrap();

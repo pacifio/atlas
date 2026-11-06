@@ -148,6 +148,7 @@ fn assistant_says(w: &World, text: &str) {
     let envelope = SessionDeltaEnvelope {
         agent_id: AgentId::new(),
         session_id: "s-a".into(),
+        seq: 0,
         delta: SessionDelta::MessageAppended {
             message: Message {
                 id: "m1".into(),
@@ -159,6 +160,9 @@ fn assistant_says(w: &World, text: &str) {
                 plan: None,
                 model: None,
                 images: vec![],
+                timestamp_approximate: false,
+                worked_ms: None,
+                stop_reason: None,
                 timestamp: chrono::Utc::now(),
             },
         },

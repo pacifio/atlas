@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { classifyFile, type FileKind } from "@/lib/file-types";
-import { ImageZoomView } from "./image-zoom-view";
+import { MediaViewerView } from "./views/media-viewer-view";
 
 interface MediaViewerProps {
   filePath: string;
@@ -42,26 +42,5 @@ export function MediaViewer({ filePath }: MediaViewerProps) {
     return mtime ? `${base}${base.includes("?") ? "&" : "?"}v=${mtime}` : base;
   }, [filePath, mtime]);
 
-  return (
-    <div className="h-full w-full flex flex-col bg-[var(--background)]">
-      <div className="flex items-center px-3 h-[32px] border-b border-[var(--border)] shrink-0 text-xs font-mono text-[var(--muted-foreground)] truncate">
-        {filePath}
-      </div>
-      {kind === "image" ? (
-        <div className="flex-1 min-h-0">
-          <ImageZoomView src={src} alt={name} />
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 flex items-center justify-center p-4 overflow-auto">
-          {kind === "video" && <video src={src} controls className="max-w-full max-h-full" />}
-          {kind === "audio" && (
-            <div className="flex flex-col items-center gap-3 text-[var(--secondary-foreground)]">
-              <span className="text-sm font-mono">{name}</span>
-              <audio src={src} controls />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <MediaViewerView filePath={filePath} name={name} kind={kind} src={src} />;
 }

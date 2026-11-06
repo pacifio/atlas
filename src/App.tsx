@@ -1,9 +1,9 @@
 import { startTransition, useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
-import { AppContextMenu } from "@/components/app-context-menu";
-import { TooltipProvider } from "@/ui/tooltip";
-import { CommandPalette } from "@/components/command-palette";
+import { CommandPalette } from "@/features/command-palette/components/command-palette";
+import { AskAgentHost } from "@/features/ask-agent/components/ask-agent-host";
+import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
 import { SearchOverlay } from "@/components/search-overlay";
@@ -12,9 +12,12 @@ import {
   useKeybindingsStore,
   watchKeybindingsOnFocus,
 } from "@/features/keybindings/stores/keybindings-store";
-import { KeymapOnboarding } from "@/features/keybindings/components/keymap-onboarding";
+import { FirstRunDialog } from "@/features/app/components/first-run-dialog";
+import { TipHost } from "@/features/tips/components/tip-host";
+import { TipTriggers } from "@/features/tips/components/tip-triggers";
 import { useNativeMenu } from "@/features/menu/lib/use-native-menu";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
+import { OPEN_SURFACE_MENU_EVENT } from "@/features/layout/lib/surfaces";
 import { useTerminalStore } from "@/features/terminal/stores/terminal-store";
 import {
   useAppStore,
@@ -30,7 +33,6 @@ import {
 import type { PendingPermission } from "@/types/acp";
 import type { AgentDelta } from "@/types/agents";
 import { cycleChatAgent } from "@/features/chat/lib/switch-agent";
-import { FilePicker } from "@/features/file-picker/components/file-picker";
 import { HintOverlay } from "@/features/hint-nav/components/hint-overlay";
 import { BrowserOverlayWatcher } from "@/features/browser/components/browser-overlay-watcher";
 import {
@@ -41,10 +43,8 @@ import {
 import { activeProjectId } from "@/features/projects/lib/active-project";
 import { instructionSync } from "@/features/projects/lib/instruction-sync-api";
 import { useProjectStore } from "@/features/projects/stores/project-store";
-import { pickAndAddProject } from "@/features/projects/lib/pick-project";
 import { flushAll } from "@/features/projects/lib/flush-registry";
 import { captureSnapshot } from "@/features/projects/lib/project-snapshot";
-import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
 import { useGitStore } from "@/features/git/stores/git-store";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -52,14 +52,15 @@ import {
   ensureRecentFilesListener,
   type RecentFile,
 } from "@/features/chat/stores/recent-files-store";
-import { useRecentChatsStore } from "@/features/projects/stores/recent-chats-store";
-import { stripInjectedContext } from "@/features/chat/lib/atlas-context";
 import { openNewAgentChat } from "@/features/chat/lib/open-agent-session";
+import { settleAndAdvance } from "@/features/chat/lib/settle-and-advance";
 import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { pruneContextUsageCache } from "@/features/chat/lib/context-usage-cache";
+import { installDevSessionHold } from "@/features/chat/lib/dev-session-hold";
+import { isDev } from "@/lib/env";
 import { isScrollHot } from "@/lib/scroll-hot";
 import { useAppProfile } from "@/lib/app-profile";
-import { basename } from "@/lib/paths";
+import { useNativeContextMenu } from "@/lib/native-context-menu";
 import {
   hydrateAgentRegistry,
   setAgentUpdatePhase,
@@ -67,17 +68,21 @@ import {
 } from "@/features/agents/stores/agent-registry-store";
 import { AgentOAuthModalHost } from "@/features/agents/components/agent-oauth-modal";
 import { watchRemovedAgents } from "@/features/chat/lib/removed-agents";
+import { watchTurnBranchChanges } from "@/features/chat/lib/branch-change-watch";
 import { AgentElicitationHost } from "@/features/chat/components/agent-elicitation-host";
 import { UiActionBridge } from "@/features/ui-actions/components/ui-action-bridge";
 import { OrgActionLogBridge } from "@/features/org-actions/components/org-action-log-bridge";
 import { initWindowFocusTracking, isWindowFocused } from "@/lib/window-focus";
+import { initAnimationVisibility } from "@/lib/visible-animation";
 import { initDockBadgeClearing } from "@/lib/dock-badge";
 import { primeNativeNotificationPermission } from "@/lib/native-notify";
 import {
   isStaleAgentTurn,
   notifyAgentEvent,
+  notifyPullRequestWatch,
   resolveAgentPermission,
 } from "@/features/notifications/lib/agent-notifier";
+import { listenSessionPromptInjected } from "@/features/chat/lib/injected-prompt";
 import { initSourceOpenedClearing } from "@/features/notifications/lib/source-opened";
 import { notifyChatEnvelope } from "@/features/notifications/lib/chat-notifier";
 import { noteAtlasSignedIn, notifyAtlasSignedOut } from "@/features/notifications/lib/app-notifier";
@@ -90,6 +95,7 @@ import {
   notifyUpdateReady,
 } from "@/features/notifications/lib/outcome-notifier";
 import { logEvent } from "@/features/log/lib/log";
+import { startSecurityNotifier } from "@/features/security/lib/security-notifier";
 import { warmMarkdownWorker, primeMarkdownRenderer } from "@/lib/markdown-cache";
 import { primeMarkdown } from "@/lib/markdown";
 import { NotificationPanel } from "@/features/notifications/components/notification-panel";
@@ -101,7 +107,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useQuitGuard } from "@/features/app/lib/use-quit-guard";
 import { RemoveAgentDialog } from "@/features/agents/components/remove-agent-dialog";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
-import { useActiveOrgProjects } from "@/features/projects/lib/org-scope";
+import { useActiveOrgProjects, activeOrgProjectsSnapshot } from "@/features/projects/lib/org-scope";
 import {
   isOrgReconciled,
   markOrgReconciled,
@@ -110,6 +116,10 @@ import { comms, listenComms, type CommsEnvelope } from "@/features/comms/lib/com
 import { startTeamPresenceListener } from "@/features/artifacts/lib/team-presence";
 import { useTeamPresenceStore } from "@/features/artifacts/stores/team-presence-store";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
+import { useSettingsNav } from "@/features/settings/stores/settings-nav-store";
+import { closeSettings, openSettingsSection } from "@/features/settings/lib/open-settings";
+import { onSessionsAutoSettled } from "@/features/chat/lib/history-api";
+import { SessionViewedTracker } from "@/features/chat/hooks/use-mark-session-viewed";
 import { commsActions, pruneTyping } from "@/features/comms/stores/comms-store";
 import { useUpdaterStore } from "@/features/updater/stores/updater-store";
 import {
@@ -119,7 +129,10 @@ import {
   listenUpdateApplied,
   listenUpdateError,
   listenUpdateChecking,
+  listenUpdateAvailable,
 } from "@/features/updater/lib/updater-api";
+import { announceLinuxRelease } from "@/features/updater/lib/linux-release-notice";
+import { isLinux } from "@/lib/platform";
 import { Toaster, toast } from "sonner";
 import { TOAST_ICONS } from "@/components/toast-icons";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -135,10 +148,28 @@ import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { createWakeRefresher } from "@/features/auth/lib/refresh-on-wake";
 import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { ConnectDialog } from "@/features/auth/components/connect-dialog";
+import { LinkPullRequestDialogHost } from "@/features/pull-requests/components/link-pull-request-dialog";
+import { SessionDetailsDialogs } from "@/features/session-context/components/session-details-dialogs";
+import { openCapture } from "@/features/capture/lib/open-capture";
+import {
+  openSessionInEditor,
+  toggleSessionDetails,
+} from "@/features/session-context/lib/details-commands";
 import { clampScale, SCALE_STEP, DEFAULT_SCALE } from "@/features/settings/lib/ui-scale";
 import { listenModelDone } from "@/features/settings/lib/models-api";
 import { useModelsStore } from "@/features/settings/stores/models-store";
 import { useLoadProjectSettings } from "@/features/settings/lib/use-scoped-setting";
+import { toggleSourceControl } from "@/features/layout/lib/source-control";
+import { toggleFiles } from "@/features/layout/lib/files-surface";
+import { refreshProjectTree } from "@/features/explorer/lib/project-tree-model";
+import { toggleTeamChat } from "@/features/layout/lib/team-chat";
+import { toggleDestination } from "@/features/layout/lib/destinations";
+import { toggleAgentPanel } from "@/features/layout/lib/org-agent";
+import { startOrgAgentBridge } from "@/features/org-agent/lib/org-agent-bridge";
+import { TooltipProvider } from "@tryatlas/design";
+
+// Developer console toggle for session holds (Universal RC groundwork).
+if (isDev) installDevSessionHold();
 
 /** Minimum gap between two wake-triggered account re-pulls. Long enough that a
  *  burst of focus edges (Space switches) costs one pull; short enough that a
@@ -157,6 +188,7 @@ const zoomReset = () =>
   useSettingsStore.getState().actions.updateSettings({ uiScale: DEFAULT_SCALE });
 
 export function App() {
+  useNativeContextMenu();
   // Own model download listeners at app scope so completion notifications are
   // delivered even when Settings is closed.
   useEffect(() => {
@@ -167,6 +199,43 @@ export function App() {
 
   // App warnings (auto-fetch failing, behind remote, config.toml errors).
   useEffect(() => startAppWarnings(), []);
+
+  // Blocking Security Agent findings (ATL-985); the rest stays on the Timeline.
+  useEffect(() => startSecurityNotifier(), []);
+
+  // The first idle sweep that settles a pile of sessions at once says so,
+  // once ever (Rust keeps the flag): otherwise a long list just vanishes.
+  useEffect(() => {
+    const off = onSessionsAutoSettled(({ count }) => {
+      toast(`Settled ${count} idle sessions`, {
+        description: "Sessions idle for a few days move to the Settled shelf.",
+        action: {
+          label: "Settings",
+          onClick: () => openSettingsSection("chat", "autoSettleAfterDays"),
+        },
+      });
+    });
+    return () => void off.then((f) => f());
+  }, []);
+
+  // A prompt Atlas sent an agent on its own (a watched pull request woke
+  // it): its tab draws it as its own row, and a session off screen says so.
+  useEffect(() => {
+    const off = listenSessionPromptInjected((e) => {
+      useChatStore
+        .getState()
+        .actions.addInjectedPrompt(
+          e.sessionId,
+          e.text,
+          { source: e.source, summary: e.summary },
+          e.at,
+        );
+      // A restart continuation is a row only; the notification is the
+      // watch's.
+      if (e.source === "pull-request-watch") void notifyPullRequestWatch(e);
+    });
+    return () => void off.then((f) => f());
+  }, []);
 
   // Keybinding profiles: load once, then pick up hand edits to
   // keybindings.json whenever the window regains focus.
@@ -192,7 +261,14 @@ export function App() {
     startCatalogListener();
     // An uninstall drops the agent's connection with no delta to any tab on
     // it; the catalog shrinking is what settles those tabs.
-    return watchRemovedAgents();
+    const unwatchRemoved = watchRemovedAgents();
+    // A turn that moves its checkout to another branch, for the composer's
+    // "Branch changed" strip.
+    const unwatchBranches = watchTurnBranchChanges();
+    return () => {
+      unwatchRemoved();
+      unwatchBranches();
+    };
   }, []);
 
   // Warm launch with a path: when the binary is started with a folder while
@@ -236,6 +312,9 @@ export function App() {
       listenUpdateError((e) => a.setError(e.message)),
       listenUpdateChecking((e) => a.setChecking(e.checking)),
     ];
+    // Linux never downloads an update, so it has no ready/restart phase:
+    // announcing the release is all there is (`updater_linux.rs`).
+    if (isLinux) offs.push(listenUpdateAvailable(announceLinuxRelease));
     // Hydrate from the current backend state (e.g. staged before this mount).
     // Show the titlebar badge but don't pop the modal on launch — the live
     // `atlas:update-ready` event opens it; hydration is badge-only.
@@ -336,6 +415,9 @@ export function App() {
   // the roster is only re-sent when somebody comes or goes: a listener that
   // mounted with the panel would miss the one sent when the sockets opened.
   useEffect(() => startTeamPresenceListener(), []);
+  // The organisation agent's socket, into its store, before any of its
+  // views mount: an answer landing with the panel closed is still kept.
+  useEffect(() => startOrgAgentBridge(), []);
   /** The Organisation the presence rosters were heard under. */
   const presenceOrgRef = useRef<string | null>(null);
   useEffect(() => {
@@ -425,8 +507,8 @@ export function App() {
   }, [bootRemoteOrgId, bootSignedIn]);
 
   // NOTE: we intentionally do NOT wipe localStorage on boot anymore. Several
-  // stores legitimately persist there via zustand `persist` — the project
-  // "Chats" list (`atlas-recent-chats`), layout prefs (`atlas-layout-prefs`),
+  // stores legitimately persist there via zustand `persist` — the
+  // sidebar's scope and Settled shelf (`atlas-sidebar`), layout prefs (`atlas-layout-prefs`),
   // the review provider/model selection — and a blanket clear was silently
   // dropping all of them on every restart. Each store carries its own
   // `version`/`migrate`, so stale keys from old builds are handled per-store.
@@ -569,7 +651,6 @@ export function App() {
     };
   }, []);
 
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [newTabPaletteOpen, setNewTabPaletteOpen] = useState(false);
   // The project rail's "Open module" row opens the same palette ⌘⌥N does.
   // The palette's state lives here, so the rail asks for it by event rather
@@ -579,23 +660,16 @@ export function App() {
     window.addEventListener("atlas:new-tab-palette", open);
     return () => window.removeEventListener("atlas:new-tab-palette", open);
   }, []);
-  // Same arrangement for ⌘K: the rail's org-row search button asks for the
-  // command palette by event, because the palette's open state lives here and
-  // one caller does not justify lifting it into a store.
+  // ⌘K's overlay keeps its state in its own store (it shares the overlay
+  // with ⌘P); the rail's org-row search button still asks for it by event.
   useEffect(() => {
-    const open = () => setCommandPaletteOpen(true);
+    const open = () => useCommandPaletteStore.getState().actions.setOpen(true);
     window.addEventListener("atlas:command-palette", open);
     return () => window.removeEventListener("atlas:command-palette", open);
   }, []);
   const [layoutSwitcherOpen, setLayoutSwitcherOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const {
-    toggleLeftPanel,
-    toggleRightPanel,
-    toggleRightChatPanel,
-    toggleChatSidebar,
-    toggleTabBar,
     addTab,
     setActiveTab,
     activateTabByIndex,
@@ -700,6 +774,7 @@ export function App() {
     // Native window focus + the "cold wake" signal live in `src/lib/window-focus.ts`
     // now — the terminal notifier needs the same answer this file did.
     const stopFocusTracking = initWindowFocusTracking();
+    const stopAnimationVisibility = initAnimationVisibility();
     const stopBadgeClearing = initDockBadgeClearing();
     // Opening a thread/terminal/conversation clears its stale banners + unread items.
     const stopSourceOpened = initSourceOpenedClearing();
@@ -762,7 +837,6 @@ export function App() {
       }
       if (pendingDeltas.length === 0) {
         oldestBufferedAt = null;
-        drainRecentChats();
         return;
       }
       // Mid-fling, hold the batch: applying it re-renders ChatPanel →
@@ -780,7 +854,6 @@ export function App() {
         return;
       }
       oldestBufferedAt = null;
-      drainRecentChats();
       const deltas = pendingDeltas.slice();
       pendingDeltas.length = 0;
       toolDeltaPos.clear();
@@ -899,47 +972,6 @@ export function App() {
       pendingDeltas.push(env);
     };
 
-    // Sessions that saw activity since the last flush. A SET, drained once per
-    // frame: `record` writes through zustand `persist`, so each call is a
-    // synchronous JSON.stringify + localStorage.setItem on the main thread, and
-    // its `updatedAt: Date.now()` guarantees the state differs every time — so
-    // every subscriber re-renders too. Calling it on the raw event meant a
-    // tool-heavy turn paid both dozens of times a second, outside the very
-    // buffer that exists to stop exactly this.
-    const pendingRecentChats = new Set<string>();
-
-    // Record a chat into the sidebar "Chats" (recently-invoked) list whenever a
-    // session sees meaningful activity. Resolves project + title from the chat
-    // session that owns this acpSessionId.
-    const recordRecentChat = (acpSessionId: string) => {
-      const sessions = useChatStore.getState().sessions;
-      for (const [tabId, s] of Object.entries(sessions)) {
-        if (s.acpSessionId !== acpSessionId) continue;
-        const path = s.workingDirectory;
-        if (!path) return;
-        useRecentChatsStore.getState().actions.record({
-          tabId,
-          projectPath: path,
-          projectName: basename(path),
-          // Strip any Atlas-injected memory scaffolding the title may carry
-          // (resumed sessions); a dirty fragment cleans to "" → fall back.
-          title: stripInjectedContext(s.title) || "Chat",
-          status: s.status,
-          agentType: s.agentType,
-          acpSessionId: s.acpSessionId,
-          updatedAt: Date.now(),
-        });
-        return;
-      }
-    };
-
-    /** Write out one record per session that saw activity this frame. */
-    const drainRecentChats = () => {
-      if (pendingRecentChats.size === 0) return;
-      for (const id of pendingRecentChats) recordRecentChat(id);
-      pendingRecentChats.clear();
-    };
-
     listenAgents((env) => {
       if (cancelled) return;
       const actions = useChatStore.getState().actions;
@@ -977,13 +1009,6 @@ export function App() {
           });
         }
         return;
-      }
-      if (
-        env.kind === "status" ||
-        env.kind === "message_appended" ||
-        env.kind === "turn_finished"
-      ) {
-        pendingRecentChats.add(env.session_id);
       }
       switch (env.kind) {
         case "text_chunk":
@@ -1119,6 +1144,7 @@ export function App() {
       if (backstopId !== null) clearTimeout(backstopId);
       window.removeEventListener("atlas:window-active", flushOnWake);
       stopFocusTracking();
+      stopAnimationVisibility();
       stopBadgeClearing();
       stopSourceOpened();
       window.removeEventListener("pointerdown", onUserActivity);
@@ -1132,9 +1158,11 @@ export function App() {
 
   // Live file-tree updates. The fileindex watcher (started in
   // `fileindex_open_project`) emits `atlas:explorer:changed` with the
-  // set of parent directories touched in each debounced batch. We
-  // reconcile each loaded directory in place — agent-side file writes
-  // appear in the tree without the user touching a refresh button.
+  // set of parent directories touched in each debounced batch. The project's
+  // cached tree re-reads the ones it has open — agent-side file writes appear
+  // in it without a refresh button, whether or not a tree is on screen. A
+  // backgrounded project's resident watcher reports too, and updates that
+  // project's tree, not the active one's.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | null = null;
@@ -1145,21 +1173,10 @@ export function App() {
     };
     listen<Payload>("atlas:explorer:changed", (e) => {
       if (cancelled) return;
-      // Ignore changes from a backgrounded project's resident watcher —
-      // only the active project's explorer should reconcile.
-      const active = activeProjectId();
-      if (e.payload.workspaceId && active && e.payload.workspaceId !== active) {
-        return;
-      }
-      const actions = useExplorerStore.getState().actions;
-      const { dirs, fullRefresh } = e.payload;
-      if (fullRefresh) {
-        void actions.refresh();
-        return;
-      }
-      for (const dir of dirs) {
-        void actions.reconcileDirectory(dir);
-      }
+      const id = e.payload.workspaceId ?? activeProjectId();
+      const root = useProjectStore.getState().projects.find((p) => p.id === id)?.path;
+      if (!root) return;
+      refreshProjectTree(root, e.payload.fullRefresh ? undefined : e.payload.dirs);
     }).then((un) => {
       if (cancelled) un();
       else unlisten = un;
@@ -1170,7 +1187,9 @@ export function App() {
     };
   }, []);
 
-  // Auto-save editor state when tabs change
+  // Auto-save editor state when tabs change. Keyed on the tabs' order, not
+  // just their count, so a tab dragged to a new place in its strip is saved.
+  const tabOrder = useMemo(() => tabs.map((t) => t.id).join("\n"), [tabs]);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (!currentProject) return;
@@ -1179,7 +1198,7 @@ export function App() {
       useLayoutStore.getState().actions.saveEditorState(currentProject.path);
     }, 1000);
     return () => clearTimeout(saveTimerRef.current);
-  }, [tabs.length, activeTabId, groupOrder, focusedGroupId, currentProject]);
+  }, [tabOrder, activeTabId, groupOrder, focusedGroupId, currentProject]);
 
   // Maintain the chat-mention picker's "recent files" queue. Push whenever
   // an editor/media/unsupported tab appears whose data.filePath we haven't
@@ -1318,46 +1337,37 @@ export function App() {
   // this is only the action-id → behaviour map. See
   // `src/features/keybindings/lib/actions.ts` for the registry.
   useActionHotkeys({
-    // ⌘⇧N — "new project": pick a folder and add it as a project in
-    // this window (Atlas is single-window now; this replaces the old
-    // "open a new native window" behaviour).
-    "workspace.add": () => {
-      void pickAndAddProject();
-    },
+    // ⌘⇧N — "Add project": the palette's sources (new, local folder, Git
+    // URL, GitHub).
+    "workspace.add": () => useCommandPaletteStore.getState().actions.openAddProject(),
     // ⌘⇧. — toggle the Arc-like project sidebar. (⌘. alone is the macOS
     // system "Cancel" chord and gets swallowed before reaching the webview.)
     "workspace.toggleSidebar": () => useProjectStore.getState().actions.toggleSidebar(),
-    "nav.commandPalette": () => setCommandPaletteOpen(true),
-    "nav.filePicker": () => setFilePickerOpen(true),
-    "nav.search": () => setSearchOpen(true),
-    "panels.left": toggleLeftPanel,
-    "panels.right": toggleRightPanel,
-    // ⌘⇧C — team chat. Shares the right slot with source control: pressing
-    // this while source control is open swaps the occupant rather than
-    // opening a second panel, and pressing it again closes the slot.
-    "panels.teamChat": toggleRightChatPanel,
-    "panels.terminal": toggleTerminal,
-    "panels.agentSidebar": toggleChatSidebar,
-    // ⌥J — open the Knowledge Base, or jump to it if already open, WITHIN
-    // the focused split column.
-    "panels.knowledge": () => {
-      const st = useLayoutStore.getState();
-      const g = st.focusedGroupId;
-      const existing = st.tabs.find((t) => (t.groupId ?? "main") === g && t.type === "knowledge");
-      if (existing) {
-        setActiveTab(existing.id);
-        return;
-      }
-      addTab({
-        id: `knowledge-${Date.now()}`,
-        type: "knowledge",
-        title: "Knowledge",
-        closable: true,
-        dirty: false,
-        data: {},
-      });
+    // ⌘K and ⌘P share one overlay: each chord opens its mode, switches to it
+    // from the other, or closes it when it is the one on screen.
+    "nav.commandPalette": () => useCommandPaletteStore.getState().actions.toggleCommands(),
+    "nav.filePicker": () => useCommandPaletteStore.getState().actions.toggleFiles(),
+    // ⇧⌘F, also the palette's "Search project contents": the overlay closes
+    // first, so the two dialogs never stack.
+    "nav.search": () => {
+      useCommandPaletteStore.getState().actions.setOpen(false);
+      setSearchOpen(true);
     },
-    "panels.tabBar": toggleTabBar,
+    // ⌘B — the project tree, a surface tab beside the agent. The id keeps its
+    // old name (it toggled the left file panel) so a rebinding still applies.
+    "panels.left": toggleFiles,
+    // ⌘⇧B — source control, a surface tab beside the agent. The id keeps its
+    // old name so a user's rebinding of it still applies.
+    "panels.right": toggleSourceControl,
+    // ⌘⇧C — team chat, a surface tab that follows you between projects.
+    "panels.teamChat": toggleTeamChat,
+    "panels.sessionDetails": toggleSessionDetails,
+    "panels.terminal": toggleTerminal,
+    // ⌘⌥A — the Organisation agent, in the side panel.
+    "panels.agent": toggleAgentPanel,
+    // ⌥J — Knowledge, a destination: opens it, or goes back to the session
+    // when it is the one on screen.
+    "panels.knowledge": () => toggleDestination("knowledge"),
     // ⌘1–8 select by index; ⌘9 always jumps to the LAST tab (browser
     // convention) — the store treats i<0 as "last".
     ...Object.fromEntries(
@@ -1378,7 +1388,7 @@ export function App() {
     "split.focusRight": () => focusAdjacentGroup(1),
     // Close the focused split column (tabs move to the left neighbour).
     "split.close": () => closeGroup(useLayoutStore.getState().focusedGroupId),
-    // Zen mode: Knowledge │ Chat │ Browser, side panels hidden. Again restores.
+    // Zen mode: Session │ Knowledge │ Browser, side panels hidden. Again restores.
     "panels.zen": () => {
       if (currentProject) toggleZenMode();
     },
@@ -1391,9 +1401,49 @@ export function App() {
       if (!tab || tab.type !== "chat") return;
       cycleChatAgent(tab.id);
     },
-    // ⌘T — new agent chat. Singleton: focuses the existing chat tab and resets
-    // it to a fresh session rather than opening a second chat tab.
+    // ⌘⌥S — settle the open session (or bring it back), through the chat
+    // tab's own sidebar, which moves on to the next session.
+    "chat.settleSession": () => {
+      const layout = useLayoutStore.getState();
+      const tab = layout.tabs.find((t) => t.id === layout.activeTabId);
+      if (!tab || tab.type !== "chat") return;
+      settleAndAdvance(tab.id);
+    },
+    // ⌘T — open a surface. A single column grows a pane beside
+    // it whose launcher takes a bare letter; a split window opens the focused
+    // column's `+` menu, which takes the same letters.
+    "tabs.openSurface": () => {
+      if (!currentProject) return;
+      // Always the surfaces pane, never the main one: with no pane yet it
+      // opens one on the launcher; otherwise it shows the pane and opens the
+      // `+` menu of its focused column (or its first).
+      const layout = useLayoutStore.getState();
+      const { groupOrder, focusedGroupId, actions } = layout;
+      if (groupOrder.length === 1) {
+        actions.setFocusedGroup(groupOrder[0]);
+        actions.addGroup();
+        return;
+      }
+      const target = focusedGroupId === groupOrder[0] ? groupOrder[1] : focusedGroupId;
+      if (layout.surfaces === "hidden") actions.setSurfaces("shown");
+      actions.setFocusedGroup(target);
+      window.dispatchEvent(
+        new CustomEvent(OPEN_SURFACE_MENU_EVENT, { detail: { groupId: target } }),
+      );
+    },
+    // New agent chat, unbound by default (⌘T A opens one). Singleton: focuses
+    // the existing chat tab and resets it to a fresh session rather than
+    // opening a second chat tab.
     "tabs.newChat": () => openNewAgentChat(),
+    "tabs.newChatIn": () => {
+      // The active organisation's projects: the picker lists only those, so
+      // another organisation's would open it empty.
+      if (activeOrgProjectsSnapshot().length > 1) {
+        useCommandPaletteStore.getState().actions.openProjectPicker();
+      } else {
+        void openNewAgentChat();
+      }
+    },
     // ⌘N — new untitled editor. The synthetic `untitled:<ts>` path
     // tells the editor to start with an empty buffer and to fall
     // into the save-as flow on ⌘S (see `editor-panel.tsx`).
@@ -1420,29 +1470,15 @@ export function App() {
         dirty: false,
         data: {},
       }),
+    // ⌘, toggles: Settings covers the window, so the same key takes you back.
     "app.settings": () =>
-      addTab({
-        id: "settings",
-        type: "settings",
-        title: "Settings",
-        closable: true,
-        dirty: false,
-        data: {},
-      }),
-    // The org's Usage dashboard — a singleton tab, so re-running focuses it.
-    "usage.open": () =>
-      addTab({
-        id: "usage",
-        type: "usage",
-        title: "Usage",
-        closable: true,
-        dirty: false,
-        data: {},
-      }),
-    // Session Capture (the popover behind the titlebar's project pill). Local
-    // `captureOpen` state lives in `ProjectLabel`, so this reaches it via the
-    // same `atlas:open-capture` event the command palette entry dispatches.
-    "app.capture": () => window.dispatchEvent(new CustomEvent("atlas:open-capture")),
+      useSettingsNav.getState().open ? closeSettings() : openSettingsSection(),
+    // The org's Usage dashboard, a destination: the same key goes back.
+    "usage.open": () => toggleDestination("usage"),
+    // Session Capture: the project label's capture popover.
+    "app.capture": openCapture,
+    // The session in the main column, in the preferred editor.
+    "app.openInEditor": openSessionInEditor,
     // ── Interface zoom ──
     "view.zoomIn": zoomIn,
     "view.zoomOut": zoomOut,
@@ -1454,31 +1490,34 @@ export function App() {
     // a SKIP group: hovering along a facepile shows each name instantly after
     // the first, instead of re-waiting per avatar.
     <TooltipProvider>
-      <AppContextMenu>
-        <div className="h-screen w-screen" onContextMenu={(e) => e.preventDefault()}>
-          <AppLayout />
-        </div>
-      </AppContextMenu>
-      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      <div className="h-screen w-screen">
+        <AppLayout />
+      </div>
+      <CommandPalette />
+      <AskAgentHost />
       <NewTabPalette open={newTabPaletteOpen} onOpenChange={setNewTabPaletteOpen} />
       <LayoutSwitcher open={layoutSwitcherOpen} onOpenChange={setLayoutSwitcherOpen} />
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
-      <FilePicker open={filePickerOpen} onOpenChange={setFilePickerOpen} />
       <HintOverlay />
       <AgentOAuthModalHost />
       {/* Sign-in asks questions of its own (device codes, login URLs), and they
           arrive before the agent has any session to route them by. */}
       <AgentElicitationHost />
       <UiActionBridge />
+      <SessionViewedTracker />
       <OrgActionLogBridge />
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />
-      <KeymapOnboarding />
+      <FirstRunDialog />
+      <TipHost />
+      <TipTriggers />
       <ConnectDialog />
       <LoadingOrganisationOverlay />
       <StopAgentsDialog />
       <ConfirmDialog />
+      <LinkPullRequestDialogHost />
+      <SessionDetailsDialogs />
       <RemoveAgentDialog />
       <BrowserOverlayWatcher />
       <ThemeEditorHost />

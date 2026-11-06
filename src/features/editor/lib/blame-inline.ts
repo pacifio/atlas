@@ -205,11 +205,11 @@ const blameTheme = EditorView.baseTheme({
     pointerEvents: "none",
     userSelect: "none",
   },
-  ".cm-blame-author": { color: "var(--atlas-syntax-function)" },
-  ".cm-blame-time": { color: "var(--atlas-syntax-number)" },
-  ".cm-blame-summary": { color: "var(--atlas-syntax-string)" },
-  ".cm-blame-uncommitted": { color: "var(--atlas-syntax-keyword)" },
-  ".cm-blame-sep": { color: "var(--atlas-syntax-comment)" },
+  ".cm-blame-author": { color: "var(--syntax-function)" },
+  ".cm-blame-time": { color: "var(--syntax-number)" },
+  ".cm-blame-summary": { color: "var(--syntax-string)" },
+  ".cm-blame-uncommitted": { color: "var(--syntax-keyword)" },
+  ".cm-blame-sep": { color: "var(--syntax-comment)" },
 });
 
 /** The inline-blame extension. Add to the editor's extensions, then dispatch

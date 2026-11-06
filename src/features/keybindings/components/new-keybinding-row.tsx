@@ -1,11 +1,5 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Select } from "@/ui/select";
-import { Hint } from "@/ui/tooltip";
 import { ACTION_BY_ID, ACTIONS, type ActionId } from "../lib/actions";
 import { type Combo, comboFromEvent, displayLabel, serializeCombo } from "../lib/combo";
 import { bindingsForCombo } from "../lib/resolve";
@@ -19,6 +13,7 @@ import {
 import { WHEN_PHRASES } from "../lib/keybindings-view";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { WhenClauseControl } from "./when-clause-control";
+import { Button, Icon, IconButton, Input, Select, Hint } from "@tryatlas/design";
 
 const COMMAND_OPTIONS = ACTIONS.map((a) => ({
   value: a.id as ActionId,
@@ -28,7 +23,7 @@ const COMMAND_OPTIONS = ACTIONS.map((a) => ({
 
 /**
  * "Add keybinding": pick a command, press its shortcut, optionally set where
- * it works, and Save. Ported from T3 Code's `NewKeybindingSettingsRow`.
+ * it works, and Save.
  *
  * An Atlas condition belongs to the command, not to one shortcut, so the
  * When here starts from the command's current condition and saving one
@@ -111,13 +106,13 @@ export function NewKeybindingRow({ onDone }: { onDone: (saved: ActionId | null) 
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Select
-          value={command ?? ("" as ActionId)}
+          value={command}
           onValueChange={(next) => {
             setCommand(next);
             setWhenTouched(false);
           }}
           options={COMMAND_OPTIONS}
-          placeholder={command ? undefined : "Command"}
+          placeholder="Command"
           size="sm"
           aria-label="Command"
           className="min-w-0 flex-1"

@@ -11,17 +11,20 @@ import type {
   SessionMessage,
   SessionModeInfo,
   SessionSnapshot,
+  QueuedPrompt,
   ToolCall,
 } from "@/types/agents";
 import type { Subagent } from "@/types/agent";
 import type { TypedHandlers, Unit } from "./types";
 import { text, tool, tools } from "./fixtures/chat";
+import { pasteAsText } from "@/features/chat/lib/pasted-text";
 import {
   askUserQuestionMulti,
   askUserQuestionSingle,
   exitPlanOptions,
   LONG_COMMAND,
   LONG_COMMAND_RESULT,
+  outwardOptions,
   PLAN_MARKDOWN,
   permissionToolCall,
   standardOptions,
@@ -38,6 +41,22 @@ interface FakeSession {
 }
 
 const sessions = new Map<string, FakeSession>();
+
+/** The fake agents advertise no `promptCapabilities.embeddedContext` — the
+ *  case every agent must be served in, so it is the one a browser review
+ *  sees. A large paste therefore reaches them the way Rust sends it to such
+ *  an agent: as a fenced text block after the prose. */
+export const FAKE_AGENT_EMBEDDED_CONTEXT = false;
+
+/** What a fake agent receives for one send: the prose, then each paste in
+ *  the form its capabilities allow. */
+export function receivedText(prose: string, pastes: { id: string; text: string }[]): string {
+  if (pastes.length === 0) return prose;
+  const blocks = pastes.map((p) =>
+    FAKE_AGENT_EMBEDDED_CONTEXT ? `[embedded atlas://paste/${p.id}]` : pasteAsText(p),
+  );
+  return [prose, ...blocks].join("\n\n");
+}
 let seq = 0;
 
 /** What a new session replays once it is bound. Set by a scenario. */
@@ -108,6 +127,19 @@ const at = (s: FakeSession) => ({ agent_id: s.key.agent_id, session_id: s.key.se
 
 export function sendDelta(delta: AgentDelta): Promise<void> {
   return emit("atlas:agents", delta);
+}
+
+/** Send a delta to the most recent session, built from its ids, for deltas no
+ *  helper here covers (`plan_updated`, `context_usage`, `rate_limits`, …). */
+export async function emitForLatest(
+  make: (ids: ReturnType<typeof at>) => AgentDelta,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] emitForLatest: no session bound yet");
+    return;
+  }
+  await sendDelta(make(at(s)));
 }
 
 /** Name a session as the agent would (`title_updated`): a seeded chat opens titled, not "New chat". */
@@ -202,6 +234,96 @@ export async function playTranscript(
     s.messages.push(message);
     await sendDelta({ kind: "message_appended", ...at(s), message });
     if (gapMs) await new Promise((r) => setTimeout(r, gapMs));
+  }
+}
+
+/**
+ * Play whole turns the way a live session delivers them, so each one ends
+ * with what only a live turn leaves behind: its files summary, frozen at
+ * `turn_finished` from the tool calls the turn upserted.
+ *
+ * `playTranscript` appends messages and nothing else, which is right for a
+ * seed but leaves every turn without its changed-files card. Each turn here
+ * opens with a `running` status carrying its own `turn_seq`, upserts every
+ * tool call it holds, and closes with `turn_finished` for the same seq. A
+ * turn is a user message and the assistant messages that answer it.
+ */
+export async function playTurns(turns: SessionMessage[][], sessionId?: string): Promise<void> {
+  if (!latest(sessionId)) {
+    console.warn("[mock-backend] playTurns: no session bound yet");
+    return;
+  }
+  for (const turn of turns) {
+    const answer = turn.findIndex((m) => m.role === "assistant");
+    const prompt = turn.find((m) => m.role === "user");
+    const last = turn[turn.length - 1];
+    await appendWithTools(answer < 0 ? turn : turn.slice(0, answer), sessionId);
+    const seqOfTurn = await openTurn(sessionId);
+    if (answer >= 0) await appendWithTools(turn.slice(answer), sessionId);
+    const endedAt = Date.parse(last.timestamp);
+    await closeTurn(
+      seqOfTurn,
+      {
+        startedAt: prompt ? Date.parse(prompt.timestamp) : endedAt,
+        endedAt,
+        workedMs: last.worked_ms,
+        stopReason: last.stop_reason,
+      },
+      sessionId,
+    );
+  }
+}
+
+let turnSeq = 0;
+
+/** Open a live turn: `running` with a fresh `turn_seq`, which is what starts
+ *  the store's per-turn files scratch. Returns the seq to close it with. */
+export async function openTurn(sessionId?: string): Promise<number> {
+  const s = latest(sessionId);
+  const seqOfTurn = ++turnSeq;
+  if (s) await sendDelta({ kind: "status", ...at(s), status: "running", turn_seq: seqOfTurn });
+  return seqOfTurn;
+}
+
+/** Close the turn `openTurn` opened, timed from `startedAt` to `endedAt`. */
+export async function closeTurn(
+  seqOfTurn: number,
+  timing: { startedAt: number; endedAt: number; workedMs?: number; stopReason?: string },
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  await sendDelta({
+    kind: "turn_finished",
+    ...at(s),
+    stop_reason: timing.stopReason ?? "end_turn",
+    turn_seq: seqOfTurn,
+    started_at_ms: timing.startedAt,
+    ended_at_ms: timing.endedAt,
+    worked_ms: timing.workedMs ?? Math.max(0, timing.endedAt - timing.startedAt),
+  });
+  await sendDelta({ kind: "status", ...at(s), status: "idle", turn_seq: seqOfTurn });
+}
+
+/** Append messages and upsert every tool call they carry: what a live turn
+ *  sends, and what the store counts a turn's files from. */
+export async function appendWithTools(
+  messages: SessionMessage[],
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  for (const message of messages) {
+    s.messages.push(message);
+    await sendDelta({ kind: "message_appended", ...at(s), message });
+    for (const toolCall of message.tool_calls) {
+      await sendDelta({
+        kind: "tool_call_upserted",
+        ...at(s),
+        message_id: message.id,
+        tool_call: toolCall,
+      });
+    }
   }
 }
 
@@ -309,11 +431,65 @@ export function setStatus(
 /** End the turn the way the real projector does — a `turn_finished` terminal,
  *  not a bare status flip. The store only freezes turn-end state (the turn's
  *  "Worked for" time, its files footer, next-step chips) on the terminal, so a
- *  mock that just went idle never showed any of it. */
-export function finishTurn(sessionId?: string): Promise<void> {
+ *  mock that just went idle never showed any of it.
+ *
+ *  Timed from the turn's prompt to now, which is the span Rust reports; the
+ *  held snapshot gets the same figure on its last message, so a re-read says
+ *  what the live turn said. */
+export function finishTurn(sessionId?: string, stopReason = "end_turn"): Promise<void> {
   const s = latest(sessionId);
   if (!s) return Promise.resolve();
-  return sendDelta({ kind: "turn_finished", ...at(s), stop_reason: "end_turn", turn_seq: 0 });
+  const prompt = [...s.messages].reverse().find((m) => m.role === "user");
+  const started = prompt ? Date.parse(prompt.timestamp) : Number.NaN;
+  const ended = Date.now();
+  const worked = Math.max(0, ended - started);
+  const timing = Number.isFinite(started)
+    ? { started_at_ms: started, ended_at_ms: ended, worked_ms: worked }
+    : {};
+  const last = s.messages[s.messages.length - 1];
+  if (last?.role === "assistant") {
+    if (Number.isFinite(started)) last.worked_ms = worked;
+    last.stop_reason = stopReason;
+  }
+  return sendDelta({
+    kind: "turn_finished",
+    ...at(s),
+    stop_reason: stopReason,
+    turn_seq: 0,
+    ...timing,
+  });
+}
+
+/** The user stopped the turn: `turn_finished` with `stop_reason: "cancelled"`.
+ *  The store sweeps the turn's live calls to failed. */
+export function cancelTurn(sessionId?: string): Promise<void> {
+  failLiveCalls(sessionId);
+  return finishTurn(sessionId, "cancelled");
+}
+
+/** The held snapshot's running and pending calls, failed as the store fails
+ *  them on a cancel or a failure, so a re-read agrees with the live turn. */
+function failLiveCalls(sessionId?: string): void {
+  for (const m of latest(sessionId)?.messages ?? []) {
+    m.tool_calls = m.tool_calls.map((call) =>
+      call.status === "running" || call.status === "pending" ? { ...call, status: "failed" } : call,
+    );
+  }
+}
+
+/** The turn failed (`turn_failed`), in the projector's order: the error
+ *  status, then the failure. The store fails the live calls and adds an
+ *  `Error: <error>` message. */
+export async function failTurn(
+  error: string,
+  errorKind: "auth" | "transient" | "fatal" | "process_dead" | "unknown",
+  sessionId?: string,
+): Promise<void> {
+  const s = latest(sessionId);
+  if (!s) return;
+  failLiveCalls(sessionId);
+  await setStatus("error", sessionId);
+  await sendDelta({ kind: "turn_failed", ...at(s), error, turn_seq: 0, error_kind: errorKind });
 }
 
 // ── The computer sleeping mid-turn ───────────────────────────────────────
@@ -342,6 +518,29 @@ export async function sleepMidTurn(): Promise<void> {
   await setStatus("idle");
 }
 
+/** A rate-limited provider being retried after a backoff: the retry notice
+ *  over the composer (`__atlasMock.actions.showRetry`). */
+export async function showRetry(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({
+    kind: "retry_status",
+    ...at(s),
+    attempt: 2,
+    max_attempts: 5,
+    delay_ms: 8000,
+    last_error: '429 Too Many Requests\n{"error":"rate_limited"}',
+  });
+}
+
+/** The agent process exiting under the session: the disconnected notice
+ *  with its Restart action (`__atlasMock.actions.disconnectAgent`). */
+export async function disconnectAgent(): Promise<void> {
+  const s = latest();
+  if (!s) return;
+  await sendDelta({ kind: "agent_disconnected", ...at(s), reason: "process exited" });
+}
+
 /** A turn that failed on waking (`__atlasMock.actions.sleepMidTurnFailed`). */
 export async function sleepMidTurnFailed(): Promise<void> {
   const s = latest();
@@ -350,15 +549,7 @@ export async function sleepMidTurnFailed(): Promise<void> {
   await streamText("Reading the test suite to see which fixtures depend on the old");
   await sendDelta({ kind: "slept_mid_turn", ...at(s), turn_seq: 0, slept_secs: 3400 });
   await new Promise((r) => setTimeout(r, AFTER_WAKE_MS));
-  // The projector's order: the error status, then the failure itself.
-  await setStatus("error");
-  await sendDelta({
-    kind: "turn_failed",
-    ...at(s),
-    error: "error decoding response body",
-    turn_seq: 0,
-    error_kind: "transient",
-  });
+  await failTurn("error decoding response body", "transient");
 }
 
 // ── Permission requests ──────────────────────────────────────────────────
@@ -401,6 +592,10 @@ export async function raisePermission(opts: {
   title: string;
   kind: string;
   rawInput: unknown;
+  /** An organisation tool's own name — makes it an outward action's card. */
+  toolName?: string;
+  /** The call's text blocks: an outward card's recipient, then its body. */
+  content?: string[];
   options: PermissionOptionRef[];
   result: OpenPermission["result"];
   reply: OpenPermission["reply"];
@@ -435,6 +630,8 @@ export async function raisePermission(opts: {
       title: opts.title,
       kind: opts.kind,
       rawInput: opts.rawInput,
+      toolName: opts.toolName,
+      content: opts.content,
     }),
     options: opts.options,
   });
@@ -583,6 +780,199 @@ export function requestPermissionQuestionMulti(): Promise<void> {
   });
 }
 
+const OUTWARD_REPLY_BODY = [
+  "Thanks Sam, good catch. The retry loop only covers the first request,",
+  "so a dropped connection on the second one still surfaces as an error.",
+  "I'll move the retry into the client wrapper and add a test for it.",
+].join("\n");
+
+/** An outward action (ADR-0014): a reply on a teammate's comment, posted in
+ *  the user's name. Enter and the Allow digits do nothing on this card
+ *  (`__atlasMock.actions.requestPermissionOutward`). */
+export function requestPermissionOutward(): Promise<void> {
+  const id = permId();
+  const input = { thread_id: "thr_42", body: OUTWARD_REPLY_BODY };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_comment_reply", input, { id, status: "pending" }),
+    title: "Reply on Sam Lee's comment",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_comment_reply",
+    content: ["Sam Lee · on src/features/sync/client.ts:118", OUTWARD_REPLY_BODY],
+    options: outwardOptions(),
+    result: (allowed) => (allowed ? "Reply posted." : "Declined."),
+    reply: (decision, option) =>
+      decision.kind === "cancelled" || !option || !isAllowKind(option.kind)
+        ? "Okay, I won't post that."
+        : "Posted the reply.",
+  });
+}
+
+/** An outward message with only Allow and Decline — no primary, no ↵
+ *  (`__atlasMock.actions.requestPermissionOutwardMessage`). */
+export function requestPermissionOutwardMessage(): Promise<void> {
+  const id = permId();
+  const body =
+    "The staging deploy is green. I'll start the migration at 3pm unless anyone objects.";
+  const input = { channel: "eng-platform", body };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_send", input, { id, status: "pending" }),
+    title: "Send a message to #eng-platform",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_send",
+    content: ["#eng-platform · 14 members", body],
+    options: [
+      { optionId: "allow_once", name: "Send", kind: "allow_once" },
+      { optionId: "reject_once", name: "Decline", kind: "reject_once" },
+    ],
+    result: (allowed) => (allowed ? "Message sent." : "Declined."),
+    reply: (decision, option) =>
+      decision.kind === "cancelled" || !option || !isAllowKind(option.kind)
+        ? "Okay, I won't send it."
+        : "Sent.",
+  });
+}
+
+/** An outward action's card while the host is still describing it: only
+ *  Decline, no body (`__atlasMock.actions.requestPermissionOutwardPreparing`). */
+export function requestPermissionOutwardPreparing(): Promise<void> {
+  const id = permId();
+  const input = { thread_id: "thr_42" };
+  return raisePermission({
+    transcriptCall: tool.other("atlas_org.org_comment_reply", input, { id, status: "pending" }),
+    title: "Preparing the approval…",
+    kind: "other",
+    rawInput: input,
+    toolName: "atlas_org.org_comment_reply",
+    options: [{ optionId: "reject_once", name: "Decline", kind: "reject_once" }],
+    result: () => "Declined.",
+    reply: () => "Okay, I won't post anything.",
+  });
+}
+
+/** Raise a session elicitation (`elicitation_requested`) on the latest
+ *  session, the way the agent host does for ACP `elicitation/create`. */
+function raiseElicitation(
+  fields: Pick<
+    Extract<AgentDelta, { kind: "elicitation_requested" }>,
+    "mode" | "message" | "requested_schema" | "url"
+  >,
+): Promise<void> {
+  const s = latest();
+  if (!s) {
+    console.warn("[mock-backend] requestElicitation: no session bound yet");
+    return Promise.resolve();
+  }
+  return sendDelta({
+    kind: "elicitation_requested",
+    ...at(s),
+    request_id: `elicit-${++seq}`,
+    ...fields,
+  });
+}
+
+/** A form elicitation with every field kind the dialog renders: text,
+ *  number, boolean, enum and multi-enum, one required
+ *  (`__atlasMock.actions.requestElicitationForm`). */
+export function requestElicitationForm(): Promise<void> {
+  return raiseElicitation({
+    mode: "form",
+    message: "I need a few details before I open the release branch.",
+    requested_schema: {
+      type: "object",
+      required: ["branch"],
+      properties: {
+        branch: {
+          type: "string",
+          title: "Branch name",
+          description: "Created from the current HEAD.",
+        },
+        reviewers: { type: "number", title: "Reviewers needed", default: 2 },
+        draft: { type: "boolean", title: "Open as a draft" },
+        environment: {
+          type: "string",
+          title: "Deploy preview to",
+          enum: ["staging", "production"],
+          enumNames: ["Staging", "Production"],
+        },
+        labels: {
+          type: "array",
+          title: "Labels",
+          items: { type: "string", enum: ["release", "infra", "docs"] },
+        },
+      },
+    },
+  });
+}
+
+/** A URL elicitation: open a page, then say when done
+ *  (`__atlasMock.actions.requestElicitationUrl`). */
+export function requestElicitationUrl(): Promise<void> {
+  return raiseElicitation({
+    mode: "url",
+    message: "Approve the deploy in the dashboard, then come back here.",
+    url: "https://example.invalid/deploys/approve",
+  });
+}
+
+/** AskUserQuestion bridged as an elicitation (a titled `oneOf` per question
+ *  with its `_custom` companion), which renders the question card with
+ *  Decline (`__atlasMock.actions.requestElicitationQuestion`). */
+export function requestElicitationQuestion(): Promise<void> {
+  return raiseElicitation({
+    mode: "form",
+    message: "Where should the socket client live?",
+    requested_schema: {
+      type: "object",
+      properties: {
+        question_0: {
+          type: "string",
+          title: "Client layer",
+          oneOf: [
+            { const: "Rust", title: "Rust", description: "Socket in Rust" },
+            { const: "TypeScript", title: "TypeScript" },
+          ],
+        },
+        question_0_custom: {
+          type: "string",
+          title: "Other",
+          description: "Type your own answer instead of choosing an option above (optional).",
+          _meta: {
+            _askUserQuestionCustomAnswer: { questionId: "question_0", isCustomAnswer: true },
+          },
+        },
+      },
+    },
+  });
+}
+
+/** A question asked during sign-in, outside any session — the device-code
+ *  page on the existing `atlas:agent-elicitation` channel
+ *  (`__atlasMock.actions.requestSignInElicitation`). */
+export function requestSignInElicitation(): Promise<void> {
+  return emit("atlas:agent-elicitation", {
+    agentId: "agent-atlas-agent",
+    requestId: `signin-elicit-${++seq}`,
+    mode: "url",
+    message: "Finish signing in in your browser. Your code is WDJB-MJHT.",
+    url: "https://example.invalid/device",
+  });
+}
+
+/** The native agent's no-grant state on the composer
+ *  (`__atlasMock.actions.aiGrantNoGrant`). */
+export async function aiGrantNoGrant(): Promise<void> {
+  const { useAiGrantStore } = await import("@/features/chat/stores/ai-grant-store");
+  useAiGrantStore.setState({
+    entitlement: {
+      state: "noGrant",
+      message: "Organisation 01JC9Z3Q6V8K2M4N5P7R9T1W3Y has no AI grant.",
+    },
+    dismissed: false,
+  });
+}
+
 /**
  * What the frontend reads from each command below — the type argument of its
  * `invoke<T>`, or `Unread` where it awaits only success or failure.
@@ -598,6 +988,90 @@ export interface AgentResponses {
   agents_cancel: Unit;
   agents_respond_permission: Unit;
   agents_send: Unit;
+  agents_queue_add: string;
+  agents_queue_remove: boolean;
+  agents_queue_clear: Unit;
+  agents_queue_pause: Unit;
+  agents_queue_drain: number | null;
+  agents_queue_send_now: Unit;
+  agents_set_hold: Unit;
+}
+
+// ── The turn queue ────────────────────────────────────────────────────────
+//
+// Rust's turn controller owns each session's queue (`agent_host/steering.rs`)
+// and drains it when a turn ends; the window only mirrors `queue_changed`. The
+// mock keeps the same contract so `bun run dev` still shows the queued strip
+// draining.
+
+interface FakeQueue {
+  items: QueuedPrompt[];
+  paused: boolean;
+  running: boolean;
+}
+const queues = new Map<string, FakeQueue>();
+const queueOf = (sessionId: string): FakeQueue => {
+  let q = queues.get(sessionId);
+  if (!q) {
+    q = { items: [], paused: false, running: false };
+    queues.set(sessionId, q);
+  }
+  return q;
+};
+
+function announceQueue(s: FakeSession): Promise<void> {
+  return sendDelta({
+    kind: "queue_changed",
+    ...at(s),
+    queue: [...queueOf(s.key.session_id).items],
+  });
+}
+
+function drainQueue(s: FakeSession): number | null {
+  const q = queueOf(s.key.session_id);
+  if (q.running || q.paused) return null;
+  const head = q.items.shift();
+  if (!head) return null;
+  void announceQueue(s);
+  void runTurn(s, head.text);
+  return 0;
+}
+
+/** One mock turn: the prompt on the wire, then a canned echo, then the queue. */
+async function runTurn(s: FakeSession, text: string, clientMessageId?: string): Promise<void> {
+  const now = () => new Date().toISOString();
+  queueOf(s.key.session_id).running = true;
+  await sendDelta({
+    kind: "user_message",
+    ...at(s),
+    message: {
+      id: `m-${++seq}`,
+      role: "user",
+      mode: "text",
+      content: text,
+      tool_calls: [],
+      timestamp: now(),
+    },
+    origin: { kind: "local" },
+    ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+  });
+  await setStatus("running", s.key.session_id);
+  const reply: SessionMessage = {
+    id: `m-${++seq}`,
+    role: "assistant",
+    mode: "text",
+    content: `(mock) You said: ${text}`,
+    tool_calls: [],
+    timestamp: now(),
+  };
+  setTimeout(() => {
+    void playTranscript([reply], 0, s.key.session_id)
+      .then(() => finishTurn(s.key.session_id))
+      .then(() => {
+        queueOf(s.key.session_id).running = false;
+        drainQueue(s);
+      });
+  }, 400);
 }
 
 export const agentHandlers: TypedHandlers<AgentResponses> = {
@@ -630,35 +1104,75 @@ export const agentHandlers: TypedHandlers<AgentResponses> = {
   agents_list_running: () => [],
   agents_replay_transcript: () => [],
   agents_drop_session: () => null,
-  agents_cancel: () => setStatus("idle"),
+  agents_cancel: ({ key }) => {
+    const s = sessions.get(key.session_id);
+    if (s) {
+      queueOf(s.key.session_id).items = [];
+      void announceQueue(s);
+    }
+    return setStatus("idle");
+  },
+  agents_queue_add: ({ key, text }) => {
+    const s = sessionOrThrow(key);
+    const id = `q-${++seq}`;
+    queueOf(s.key.session_id).items.push({ id, text: String(text), origin: { kind: "local" } });
+    void announceQueue(s);
+    return id;
+  },
+  agents_queue_remove: ({ key, itemId }) => {
+    const s = sessionOrThrow(key);
+    const q = queueOf(s.key.session_id);
+    const before = q.items.length;
+    q.items = q.items.filter((i) => i.id !== itemId);
+    void announceQueue(s);
+    return q.items.length !== before;
+  },
+  agents_queue_clear: ({ key }) => {
+    const s = sessionOrThrow(key);
+    queueOf(s.key.session_id).items = [];
+    void announceQueue(s);
+    return null;
+  },
+  agents_queue_pause: ({ key, paused }) => {
+    const s = sessionOrThrow(key);
+    queueOf(s.key.session_id).paused = !!paused;
+    if (!paused) drainQueue(s);
+    return null;
+  },
+  agents_queue_drain: ({ key }) => drainQueue(sessionOrThrow(key)),
+  agents_queue_send_now: ({ key, itemId }) => {
+    const s = sessionOrThrow(key);
+    const q = queueOf(s.key.session_id);
+    const at_ = q.items.findIndex((i) => i.id === itemId);
+    if (at_ > 0) q.items.unshift(...q.items.splice(at_, 1));
+    void announceQueue(s);
+    drainQueue(s);
+    return null;
+  },
+  // The developer hold: Rust keeps the session past its tab and says so.
+  agents_set_hold: ({ sessionId, held }) => {
+    const s = sessions.get(String(sessionId));
+    if (s) void sendDelta({ kind: "hold_changed", ...at(s), held: !!held });
+    return null;
+  },
   agents_respond_permission: ({ agentId, sessionId, requestId, decision }) => {
     void resolvePermission(agentId, sessionId, requestId, decision);
     return null;
   },
-  // Echo the prompt back so the composer loop is exercisable.
-  agents_send: async ({ key, text }) => {
+  // Echo the prompt back so the composer loop is exercisable — the prompt as
+  // the agent would receive it, large pastes included.
+  agents_send: async ({ key, text: sent, pastedTexts, clientMessageId }) => {
     const s = sessions.get(key.session_id);
     if (!s) return null;
+    const text = receivedText(String(sent), (pastedTexts ?? []) as { id: string; text: string }[]);
     const handled = promptHandler?.({
       sessionId: s.key.session_id,
       pluginId: s.pluginId,
       cwd: s.cwd,
-      text: String(text),
+      text,
     });
     if (handled) return null;
-    const now = () => new Date().toISOString();
-    await setStatus("running");
-    const reply: SessionMessage = {
-      id: `m-${++seq}`,
-      role: "assistant",
-      mode: "text",
-      content: `(mock) You said: ${text}`,
-      tool_calls: [],
-      timestamp: now(),
-    };
-    setTimeout(() => {
-      void playTranscript([reply]).then(() => finishTurn());
-    }, 400);
+    await runTurn(s, String(text), clientMessageId ? String(clientMessageId) : undefined);
     return null;
   },
 };

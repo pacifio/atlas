@@ -3,7 +3,7 @@
  *
  * After `restoreSnapshot` paints the cached UI instantly, we kick a
  * NON-BLOCKING background refresh of the cheap-but-possibly-stale data (git
- * status, explorer tree). Steady-state freshness also arrives
+ * status, the project tree). Steady-state freshness also arrives
  * via the resident watchers (`atlas:git-changed`, `atlas:explorer:changed`),
  * so this mainly covers changes that happened while the project was
  * backgrounded.
@@ -16,7 +16,7 @@
  */
 
 import { useGitStore } from "@/features/git/stores/git-store";
-import { useExplorerStore } from "@/features/explorer/stores/explorer-store";
+import { refreshProjectTree } from "@/features/explorer/lib/project-tree-model";
 import { useProjectStore } from "../stores/project-store";
 
 export function revalidateProject(projectId: string, path: string): void {
@@ -30,11 +30,7 @@ export function revalidateProject(projectId: string, path: string): void {
       .catch(() => {});
   }
 
-  // Explorer — reconcile the loaded tree in place (cheap).
-  if (stillActive()) {
-    void useExplorerStore
-      .getState()
-      .actions.refresh()
-      .catch(() => {});
-  }
+  // The project tree, if one is cached — re-reads the folders on screen and
+  // marks the rest to re-read when opened (cheap).
+  if (stillActive()) refreshProjectTree(path);
 }
