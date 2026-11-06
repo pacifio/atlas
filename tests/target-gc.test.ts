@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
  * collecting fails the quietest way there is: every build stays green while
  * target/ grows back to the 67 GB it was before the script existed, and the
  * first symptom is a full disk. The opposite slip is as quiet and costs more:
- * a sweep on a downgrade (a worktree on an older version branch sharing the
+ * a sweep on a downgrade (a worktree on an older branch sharing the
  * target dir) throws away builds that the next run on the newer branch has to
  * redo from scratch.
  *

@@ -29,7 +29,7 @@ import { useTipsStore } from "../stores/tips-store";
 
 /** Days Atlas must have been opened on before asking for a star. */
 const STAR_AFTER_DAYS = 3;
-const REPO_URL = "https://github.com/pacifio/atlas";
+const REPO_URL = "https://github.com/tryatlas/atlas";
 
 export function TipTriggers() {
   const loaded = useTipsStore.use.loaded();

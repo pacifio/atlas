@@ -129,7 +129,7 @@ Every release carries two kinds of integrity evidence.
   can check a download with:
 
   ```bash
-  gh attestation verify tryatlas_0.4.2_amd64.deb --repo pacifio/atlas
+  gh attestation verify tryatlas_0.4.2_amd64.deb --repo tryatlas/atlas
   ```
 
 - **GPG signatures**, once the release key exists. `scripts/linux/sign-release.sh` signs

@@ -706,8 +706,8 @@ mod clone_guard_tests {
 
     #[test]
     fn only_github_https_urls_parse() {
-        assert!(parse_github_https("https://github.com/pacifio/atlas").is_ok());
-        assert!(parse_github_https("https://github.com/pacifio/atlas.git").is_ok());
+        assert!(parse_github_https("https://github.com/tryatlas/atlas").is_ok());
+        assert!(parse_github_https("https://github.com/tryatlas/atlas.git").is_ok());
         // The RCE shapes: flag injection and shell transports.
         assert!(parse_github_https("--upload-pack=touch /tmp/pwn").is_err());
         assert!(parse_github_https("ext::sh -c 'touch /tmp/pwn'").is_err());

@@ -3,7 +3,7 @@
 # is in <dir>, with each tarball's sha256.
 #
 # Usage: scripts/linux/aur-pkgbuild.sh <dir with atlas-<ver>-linux-<arch>.tar.gz> <out PKGBUILD>
-# Environment: VERSION, RELEASE_TAG (required); GITHUB_REPOSITORY (default pacifio/atlas)
+# Environment: VERSION, RELEASE_TAG (required); GITHUB_REPOSITORY (default tryatlas/atlas)
 #
 # package-linux.sh calls it for the one arch it just packaged, so makepkg can
 # build the Arch package from it; release-linux.yml's publish job calls it
@@ -18,7 +18,7 @@ DIR="$1"
 OUT="$2"
 : "${VERSION:?VERSION is required}"
 : "${RELEASE_TAG:?RELEASE_TAG is required}"
-REPO="${GITHUB_REPOSITORY:-pacifio/atlas}"
+REPO="${GITHUB_REPOSITORY:-tryatlas/atlas}"
 
 ARCHES=()
 SOURCES=""

@@ -16,19 +16,19 @@ The agentic visibility & control layer your SDLC was missing.
 
 <br />
 
-<a href="https://github.com/pacifio/atlas/stargazers"><img src="https://img.shields.io/github/stars/pacifio/atlas?style=social" alt="GitHub stars"></a>
-<a href="https://github.com/pacifio/atlas/forks"><img src="https://img.shields.io/github/forks/pacifio/atlas?style=social" alt="GitHub forks"></a>
-<a href="https://github.com/pacifio/atlas/graphs/contributors"><img src="https://img.shields.io/github/contributors/pacifio/atlas?label=contributors&color=blue" alt="Contributors"></a>
+<a href="https://github.com/tryatlas/atlas/stargazers"><img src="https://img.shields.io/github/stars/tryatlas/atlas?style=social" alt="GitHub stars"></a>
+<a href="https://github.com/tryatlas/atlas/forks"><img src="https://img.shields.io/github/forks/tryatlas/atlas?style=social" alt="GitHub forks"></a>
+<a href="https://github.com/tryatlas/atlas/graphs/contributors"><img src="https://img.shields.io/github/contributors/tryatlas/atlas?label=contributors&color=blue" alt="Contributors"></a>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/pacifio/atlas/ci.yml?branch=main&label=CI)](https://github.com/pacifio/atlas/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/pacifio/atlas?include_prereleases&label=release)](https://github.com/pacifio/atlas/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/tryatlas/atlas/ci.yml?branch=main&label=CI)](https://github.com/tryatlas/atlas/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/tryatlas/atlas?include_prereleases&label=release)](https://github.com/tryatlas/atlas/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-black)](#download)
 [![Discord](https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/GmnFggaPfP)
 [![Atlas CLI](https://img.shields.io/badge/Atlas%20CLI-install-black?logo=gnubash&logoColor=white)](https://github.com/tryatlas/cli)
 [![Learn](https://img.shields.io/badge/Learn-YouTube%20playlist-FF0000?logo=youtube&logoColor=white)](https://youtube.com/playlist?list=PLWa1N2LyiGv0)
 
-<sub>[Download](#download) · [Docs](https://docs.tryatlas.cc/) · [Learn](https://youtube.com/playlist?list=PLWa1N2LyiGv0) · [Website](https://www.tryatlas.cc/) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/pacifio/atlas/issues)</sub>
+<sub>[Download](#download) · [Docs](https://docs.tryatlas.cc/) · [Learn](https://youtube.com/playlist?list=PLWa1N2LyiGv0) · [Website](https://www.tryatlas.cc/) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/tryatlas/atlas/issues)</sub>
 
 <br />
 
@@ -179,7 +179,7 @@ Works with no account and no network.
 
 ## Download
 
-Grab the latest build from [tryatlas.cc](https://www.tryatlas.cc/) or the [releases page](https://github.com/pacifio/atlas/releases) — a `.dmg` for macOS (Apple Silicon or Intel), an `.msi` for Windows, and `.deb`, `.rpm` or AppImage for Linux.
+Grab the latest build from [tryatlas.cc](https://www.tryatlas.cc/) or the [releases page](https://github.com/tryatlas/atlas/releases) — a `.dmg` for macOS (Apple Silicon or Intel), an `.msi` for Windows, and `.deb`, `.rpm` or AppImage for Linux.
 
 > [!NOTE]
 > Atlas runs on macOS 11+, Windows 10+ (x64), and x86-64 Linux with WebKitGTK 4.1. See the [install guide](https://docs.tryatlas.cc/docs/getting-started/install).
@@ -216,7 +216,7 @@ Requires **[Bun](https://bun.sh/)** and **Rust** (stable, via [rustup](https://r
 </details>
 
 ```bash
-git clone https://github.com/pacifio/atlas
+git clone https://github.com/tryatlas/atlas
 cd atlas
 bun install
 bun run dev:app
@@ -236,7 +236,7 @@ bun run build:app:win   # Windows .msi installer
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
-- **Feature work targets the current version branch**, not `main`. `main` only receives a finished version branch, and that merge is the release.
+- **Every PR targets `main`** (hotfixes for a shipped version excepted; see CONTRIBUTING.md) and is squash-merged, so write its title as a Conventional Commit (`fix(scope): …`). Releases are tags on `main`.
 
 [docs/architecture.md](docs/architecture.md) covers how Atlas is built. [SECURITY.md](.github/SECURITY.md) covers reporting vulnerabilities.
 
@@ -244,8 +244,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). One thing catches people out:
 
 ## Contributors
 
-<a href="https://github.com/pacifio/atlas/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=pacifio/atlas" />
+<a href="https://github.com/tryatlas/atlas/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tryatlas/atlas" />
 </a>
 
 ## License
