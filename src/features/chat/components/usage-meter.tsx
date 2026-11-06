@@ -1,64 +1,9 @@
 import { cn } from "@/lib/utils";
 
 /**
- * The Usage popup's two gauges.
- *
- * `TickMeter` is the reference card's meter: a row of thin ticks whose colour
- * runs green → amber → red along the scale, with a marker at the current
- * value and everything past the marker dimmed. For a context window the
- * scale IS the window: 0 % on the left, the model's limit on the right, the
- * warning band starting at 80 % where the ACP thread starts warning too.
- *
- * `UsageRing` is the pill's 12 px arc — the plan pill's ring, at the pill's
- * size.
+ * The usage pill's 12 px arc — the plan pill's ring, at the pill's size. The
+ * popup's tick meter is the package's `SegmentMeter variant="gauge"`.
  */
-
-const TICKS = 48;
-
-export function TickMeter({
-  value,
-  ticks = TICKS,
-  warnAt = 80,
-  className,
-}: {
-  /** 0–100; values past 100 pin the marker at the end. */
-  value: number;
-  ticks?: number;
-  /** Percent at which the ticks turn amber. */
-  warnAt?: number;
-  className?: string;
-}) {
-  const pct = Math.max(0, Math.min(100, value));
-  return (
-    <div className={cn("relative", className)}>
-      <div className="flex h-3 items-end gap-px" aria-hidden>
-        {Array.from({ length: ticks }, (_, i) => {
-          const at = ((i + 0.5) / ticks) * 100;
-          const lit = at <= pct;
-          const color =
-            at >= 100
-              ? "var(--atlas-status-error-foreground)"
-              : at >= warnAt
-                ? "var(--atlas-status-warning-foreground)"
-                : "var(--atlas-status-success-foreground)";
-          return (
-            <span
-              key={i}
-              className="h-full w-[2px] flex-1 rounded-sm transition-opacity duration-200"
-              style={{ background: color, opacity: lit ? 1 : 0.22 }}
-            />
-          );
-        })}
-      </div>
-      {/* The marker: a hairline at the value, moving with it. */}
-      <span
-        className="pointer-events-none absolute -top-0.5 h-4 w-px bg-[var(--foreground)]"
-        style={{ left: `${pct}%`, transition: "left 220ms cubic-bezier(0.32,0.72,0,1)" }}
-        aria-hidden
-      />
-    </div>
-  );
-}
 
 export function UsageRing({
   frac,

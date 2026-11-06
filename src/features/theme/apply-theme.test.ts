@@ -103,7 +103,7 @@ describe("applyTheme and the boot variables", () => {
 
 /**
  * The cold-start replay. The app's first render lands three IPC round trips
- * before the first `applyTheme`, and it used to find no `--atlas-*` variable at
+ * before the first `applyTheme`, and it used to find no theme-key variable at
  * all — transparent surfaces, and a dark flash for anyone on a light theme.
  * `index.html` now replays the whole cached map into the same `<style>`; these
  * run that inline script for real, against what `applyTheme` cached.
@@ -138,7 +138,7 @@ describe("the launch replay in index.html", () => {
 
     const style = document.getElementById("atlas-resolved-theme");
     expect(style?.textContent).toBe(resolvedThemeCss(resolved.cssVars));
-    expect(style?.textContent).toContain("--atlas-");
+    expect(style?.textContent).toContain("--element-hover:");
     expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(document.documentElement.dataset.themeAppearance).toBe("light");
   });

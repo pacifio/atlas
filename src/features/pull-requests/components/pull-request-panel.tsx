@@ -21,7 +21,6 @@ import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys"
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { Segmented } from "@/ui/segmented";
 
 import { pullRequestTabTitle, readPullRequestTabData } from "../lib/open-pull-request-tab";
 import { classifyPrError } from "../lib/pr-errors";
@@ -74,6 +73,7 @@ import { PullRequestGuideTab } from "./pull-request-guide-tab";
 import { PullRequestSummaryTab } from "./pull-request-summary-tab";
 import { PullRequestCodeTab } from "./pull-request-code-tab";
 import { PullRequestTimelineTab, TimelineCounts } from "./pull-request-timeline-tab";
+import { Segmented } from "@tryatlas/design";
 
 type InnerTab = "summary" | "guide" | "timeline" | "code";
 
@@ -257,17 +257,19 @@ export function PullRequestPanel({
   const fixFindingRef = useRef(agent.fixFinding);
   fixFindingRef.current = agent.fixFinding;
   const canFix = agent.fixFinding !== null;
+  const headBranch = detail?.headBranch ?? null;
   const scope = useMemo<PullRequestScope>(
     () => ({
       repoPath,
       number,
       repositoryUrl,
+      headBranch,
       agent: {
         fixFinding: canFix ? (finding) => fixFindingRef.current?.(finding) : null,
         pending: agent.pending,
       },
     }),
-    [repoPath, number, repositoryUrl, canFix, agent.pending],
+    [repoPath, number, repositoryUrl, headBranch, canFix, agent.pending],
   );
 
   if (!detail) {

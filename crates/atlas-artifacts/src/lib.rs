@@ -38,7 +38,7 @@ mod socket;
 
 pub use board::{CloudBoard, OrgBoard, ProjectKey, SessionKey};
 pub use client::{
-    ArtifactsClient, BoardQuery, CommentTarget, InboxRead, NewComment, BOARD_PAGE_MAX,
+    ArtifactsClient, BoardQuery, CommentTarget, InboxRead, NewComment, TraceQuery, BOARD_PAGE_MAX,
     ENTRY_PAGE_MAX, SEARCH_MAX_CHARS,
 };
 pub use error::{Error, Result};
@@ -46,7 +46,7 @@ pub use manager::{ArtifactsEvent, ArtifactsManager, ManagerConfig};
 pub use model::{
     AnchorKind, ArtifactShare, Comment, CommentVotes, EntryPayload, InboxEntry, InboxKind,
     InboxPage, RemoteEntry, RemoteEntryCounts, RemoteProject, RemoteSession, RemoteToolTally,
-    SessionBoardPage, SessionDetailPage,
+    SessionBoardPage, SessionDetailPage, TraceCheckpoint, TracePage, TraceSession, TraceWorkspace,
 };
 pub use socket::{ticket_request, ClientFrame, ExitReason, Keepalive, ServerFrame};
 

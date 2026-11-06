@@ -117,7 +117,7 @@ describe("tab placement (ADR-0024)", () => {
   });
 
   it("the column renderer keeps no destination mounted", () => {
-    const source = read("src/features/layout/components/center-panel.tsx");
+    const source = read("src/features/layout/components/tab-panels.tsx");
     const match = source.match(/const PERSISTENT_TYPES_LIST = \[([\s\S]*?)\] as const/);
     expect(match).not.toBeNull();
     const kept = [...match![1].matchAll(/^\s*"([a-z-]+)",/gm)].map((m) => m[1] as TabType);

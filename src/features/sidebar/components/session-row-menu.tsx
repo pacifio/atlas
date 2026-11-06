@@ -33,17 +33,6 @@ import {
   Undo2,
   Trash2,
 } from "lucide-react";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
 import { snoozePresets } from "@/features/chat/lib/session-snooze";
 import { OpenInEditorContextItems } from "@/features/external-editor/components/open-in-editor-menu";
 import { openLinkPullRequestDialog } from "@/features/pull-requests/components/link-pull-request-dialog";
@@ -54,6 +43,17 @@ import { prErrorMessage, classifyPrError } from "@/features/pull-requests/lib/pr
 import { toast } from "sonner";
 import type { SidebarSession } from "../lib/sidebar-sessions";
 import { requestCustomSnooze } from "./custom-snooze-dialog";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@tryatlas/design";
 
 /** What the menu's items do, given the session they were opened for. */
 export interface SessionMenuActions {
@@ -266,7 +266,18 @@ function SessionMenuItems({
         Project settings
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem variant="destructive" onClick={() => actions.delete(session)}>
+      {/* ADR-0001 Rule 7: a session another process is still writing is not
+          Atlas's to delete. Say no before the click, not in a toast after. */}
+      <ContextMenuItem
+        variant="destructive"
+        disabled={session.liveElsewhere}
+        title={
+          session.liveElsewhere
+            ? "Still active in another process — close it there first"
+            : undefined
+        }
+        onClick={() => actions.delete(session)}
+      >
         <Trash2 />
         Delete…
       </ContextMenuItem>

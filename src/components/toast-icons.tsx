@@ -1,8 +1,19 @@
-import { Check, CircleAlert, CircleCheck, Copy, Info, TriangleAlert, X } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  Check,
+  CircleAlert,
+  CircleCheck,
+  Copy,
+  Info,
+  Sparkles,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { ToasterProps } from "sonner";
+import { fixWithAgentAction } from "@/features/ask-agent/lib/open-ask";
 import { copyText } from "@/lib/clipboard";
-import { Icon } from "@/ui/icon";
+import { Button, Icon } from "@tryatlas/design";
+import { toastFixable } from "./toast-fix";
 
 /**
  * The glyphs every typed toast wears, and the copy button that rides with them.
@@ -19,6 +30,11 @@ import { Icon } from "@/ui/icon";
  * call's arguments, which it never sees: title, then the description on its own
  * line. Reading the DOM also means a ReactNode description copies as the text a
  * person sees.
+ *
+ * The error icon carries "Fix with agent" the same way, so every
+ * `toast.error(…)` offers it without the call site doing anything; it reads
+ * the toast's text and shows only when that text names a cause
+ * (`toast-fix.ts`). `TOAST_ERROR_ICON_NO_FIX` opts a call site out.
  *
  * Untyped `toast("…")` and `toast.loading` keep sonner's own (absent / spinner)
  * icon and so have no copy button; a call site that passes its own `icon`
@@ -62,11 +78,62 @@ function ToastCopyButton() {
   );
 }
 
-function ToastIcon({ glyph }: { glyph: ReactNode }) {
+/** The toast's title and description, as `toastCopyText` reads them. */
+function toastParts(toast: Element | null): { title: string; description: string } {
+  const part = (selector: string) => toast?.querySelector(selector)?.textContent?.trim() ?? "";
+  return { title: part("[data-title]"), description: part("[data-description]") };
+}
+
+/** "Fix with agent" on an error toast that says what went wrong
+ *  (`toastFixable`): the ask box, pre-filled with the toast's text as an
+ *  error. Hidden until it has read the toast, and for good when the text
+ *  gives an agent nothing to fix. */
+function ToastFixButton() {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [fixable, setFixable] = useState(false);
+
+  useLayoutEffect(() => {
+    const toast = ref.current?.closest("[data-sonner-toast]") ?? null;
+    const { title, description } = toastParts(toast);
+    // A call site that brings its own "Fix with agent" action keeps just it.
+    const ownFix = [...(toast?.querySelectorAll("[data-button]") ?? [])].some((b) =>
+      /fix with agent/i.test(b.textContent ?? ""),
+    );
+    setFixable(!ownFix && toastFixable(title, description));
+  }, []);
+
+  return (
+    <span ref={ref} data-toast-fix="" hidden={!fixable}>
+      <Button
+        size="xs"
+        variant="ghost"
+        onClick={(event) => {
+          const { title, description } = toastParts(
+            event.currentTarget.closest("[data-sonner-toast]"),
+          );
+          // The same action a call site passes Sonner (`fixWithAgentAction`):
+          // the box grows from the button's rect, since the toast can time
+          // out while it is open.
+          fixWithAgentAction({
+            kind: "error",
+            source: "Atlas",
+            message: description ? `${title}\n${description}` : title,
+          }).onClick(event);
+        }}
+      >
+        <Icon icon={Sparkles} size="sm" />
+        Fix with agent
+      </Button>
+    </span>
+  );
+}
+
+function ToastIcon({ glyph, fix = false }: { glyph: ReactNode; fix?: boolean }) {
   return (
     <>
       <span data-toast-glyph="">{glyph}</span>
       <ToastCopyButton />
+      {fix ? <ToastFixButton /> : null}
     </>
   );
 }
@@ -86,6 +153,11 @@ export const TOAST_ICONS: ToasterProps["icons"] = {
   success: <ToastIcon glyph={TOAST_GLYPHS.success} />,
   info: <ToastIcon glyph={TOAST_GLYPHS.info} />,
   warning: <ToastIcon glyph={TOAST_GLYPHS.warning} />,
-  error: <ToastIcon glyph={TOAST_GLYPHS.error} />,
+  error: <ToastIcon glyph={TOAST_GLYPHS.error} fix />,
   close: <Icon icon={X} size="xs" />,
 };
+
+/** The error icon, copy button and all, without "Fix with agent": for a
+ *  call site whose message the user fixes themselves but which
+ *  `toastFixable` lets through. */
+export const TOAST_ERROR_ICON_NO_FIX = <ToastIcon glyph={TOAST_GLYPHS.error} />;

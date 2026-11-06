@@ -9,18 +9,6 @@
 import { useState, type ReactNode } from "react";
 import { AlertTriangle, ChevronDown, CircleX, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { Input } from "@/ui/input";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Select } from "@/ui/select";
-import { Hint } from "@/ui/tooltip";
 import {
   DEFAULT_WHEN_VARIABLE,
   isKnownWhenVariable,
@@ -33,6 +21,20 @@ import {
   whenToExpression,
   type WhenNode,
 } from "../lib/when";
+import {
+  Button,
+  Icon,
+  Input,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Select,
+  Hint,
+} from "@tryatlas/design";
 
 type BooleanOperator = "and" | "or";
 

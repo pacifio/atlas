@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Image as ImageIcon, Music, RefreshCw } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { timeAgo } from "@/lib/time-ago";
-import { Hint } from "@/ui/tooltip";
 import { AudioPlayer } from "./audio-player";
-import { CommsAvatar } from "./comms-avatar";
-import { formatBytes, saveAttachment } from "./message-group";
+import { FileRowView, FilesTabView, MediaTile } from "./views/files-tab-view";
+import { saveAttachment } from "../lib/attachment-actions";
+import { formatBytes } from "../lib/derive";
 import { attachmentPath, cachedAttachmentPath } from "../lib/attachment-cache";
 import { useCommsStore } from "../stores/comms-store";
 import { openMediaList, toLightboxItem, type LightboxItem } from "../stores/lightbox-store";
-import type { LucideIcon } from "lucide-react";
 import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
 
 /**
@@ -18,8 +16,8 @@ import type { ChatAttachment, CommsMessage, OrgMemberProfile } from "../types";
  * There is no server route listing a conversation's attachments — they ride
  * embedded in messages and nowhere else — so this tab is a PROJECTION over
  * the transcript the store already holds, and its coverage grows with
- * history. The footer says so explicitly and offers to page more in; a
- * silent cap that reads as "that's everything" would be a lie.
+ * history. Each section offers to page more in; a silent cap that reads as
+ * "that's everything" would be a lie.
  */
 export function FilesTab({ convId }: { convId: string }) {
   const messages = useCommsStore((s) => s.messages[convId]);
@@ -57,102 +55,33 @@ export function FilesTab({ convId }: { convId: string }) {
   };
 
   return (
-    <div className="hide-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-3 pt-2">
-      {entries.length === 0 && (
-        <p className="px-1 pt-4 text-center text-xs text-disabled">No files in loaded history.</p>
-      )}
-
-      {media.length > 0 && (
-        <>
-          <SectionHead
-            label="Media"
-            icon={ImageIcon}
-            onRefresh={loadOlder}
-            refreshing={loadingOlder}
-          />
-          <div className="grid grid-cols-3 gap-1">
-            {media.map(({ message, attachment }) => (
-              <MediaThumb
-                key={attachment.id}
-                attachment={attachment}
-                message={message}
-                gallery={gallery}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      {audio.length > 0 && (
-        <>
-          <SectionHead label="Audio" icon={Music} onRefresh={loadOlder} refreshing={loadingOlder} />
-          <div className="flex flex-col gap-1">
-            {audio.map(({ message, attachment }) => (
-              <AudioEntry
-                key={attachment.id}
-                attachment={attachment}
-                author={members.get(message.author_id) ?? null}
-              />
-            ))}
-          </div>
-        </>
-      )}
-
-      {files.length > 0 && (
-        <>
-          <SectionHead
-            label="Files"
-            icon={FileText}
-            onRefresh={loadOlder}
-            refreshing={loadingOlder}
-          />
-          <div className="flex flex-col gap-1">
-            {files.map(({ message, attachment }) => (
-              <FileRow
-                key={attachment.id}
-                attachment={attachment}
-                message={message}
-                author={members.get(message.author_id) ?? null}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function SectionHead({
-  label,
-  icon: Icon,
-  onRefresh,
-  refreshing,
-}: {
-  label: string;
-  icon: LucideIcon;
-  /** Pages older history in — this list only sees what the transcript holds,
-   *  so "refresh" here honestly means "reach further back". */
-  onRefresh: () => void;
-  refreshing: boolean;
-}) {
-  return (
-    <div className="flex items-center gap-1.5 px-1 pb-1 pt-2">
-      <Icon size={11} className="shrink-0 text-secondary-foreground" />
-      <span className="text-2xs font-semibold uppercase tracking-[0.06em] text-secondary-foreground">
-        {label}
-      </span>
-      {/* Unwrapped: a wrapper span would swallow the button's `ml-auto`. */}
-      <Hint label="Load older messages" wrap={false}>
-        <button
-          type="button"
-          disabled={refreshing}
-          onClick={onRefresh}
-          className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground disabled:opacity-50 cursor-pointer"
-        >
-          <RefreshCw size={9} className={refreshing ? "animate-spin" : ""} />
-        </button>
-      </Hint>
-    </div>
+    <FilesTabView
+      media={media.map(({ message, attachment }) => (
+        <MediaThumb
+          key={attachment.id}
+          attachment={attachment}
+          message={message}
+          gallery={gallery}
+        />
+      ))}
+      audio={audio.map(({ message, attachment }) => (
+        <AudioEntry
+          key={attachment.id}
+          attachment={attachment}
+          author={members.get(message.author_id) ?? null}
+        />
+      ))}
+      files={files.map(({ message, attachment }) => (
+        <FileRow
+          key={attachment.id}
+          attachment={attachment}
+          message={message}
+          author={members.get(message.author_id) ?? null}
+        />
+      ))}
+      loadingOlder={loadingOlder}
+      onLoadOlder={loadOlder}
+    />
   );
 }
 
@@ -184,28 +113,13 @@ function MediaThumb({
 
   if (failed) return null;
   return (
-    <>
-      <button
-        type="button"
-        title={`${attachment.filename} · ${timeAgo(new Date(message.created_at).toISOString(), { suffix: true })}`}
-        onClick={() => path && openMediaList(gallery, attachment.id)}
-        className="relative aspect-square overflow-hidden rounded-md border border-border-subtle bg-card cursor-zoom-in"
-      >
-        {path ? (
-          isVideo ? (
-            <video src={convertFileSrc(path)} muted className="h-full w-full object-cover" />
-          ) : (
-            <img
-              src={convertFileSrc(path)}
-              alt={attachment.filename}
-              className="h-full w-full object-cover"
-            />
-          )
-        ) : (
-          <span className="absolute inset-0 bg-[var(--card)] atlas-marker-running" />
-        )}
-      </button>
-    </>
+    <MediaTile
+      filename={attachment.filename}
+      title={`${attachment.filename} · ${timeAgo(new Date(message.created_at).toISOString(), { suffix: true })}`}
+      kind={isVideo ? "video" : "image"}
+      src={path ? convertFileSrc(path) : null}
+      onOpen={() => openMediaList(gallery, attachment.id)}
+    />
   );
 }
 
@@ -252,28 +166,14 @@ function FileRow({
 }) {
   const progress = useCommsStore((s) => s.downloads[attachment.id]);
   return (
-    <button
-      type="button"
-      title={`Download ${attachment.filename}`}
-      disabled={progress !== undefined}
-      onClick={() => void saveAttachment(attachment)}
-      // A surface of its own: on the panel's pure-black card these rows had
-      // nothing to sit on and read as floating text.
-      className="flex w-full items-center gap-2 rounded-lg bg-card px-2.5 py-2 text-left transition-colors hover:bg-element-hover cursor-pointer"
-    >
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm text-secondary-foreground">
-          {attachment.filename}
-        </span>
-        <span className="mt-0.5 flex items-center gap-1 text-2xs text-disabled">
-          <CommsAvatar member={author} size={12} />
-          <span className="truncate">{author?.name ?? "Unknown"}</span>·
-          <span className="shrink-0">
-            {timeAgo(new Date(message.created_at).toISOString(), { suffix: true })}
-          </span>
-          ·<span className="shrink-0">{formatBytes(attachment.bytes)}</span>
-        </span>
-      </span>
-    </button>
+    <FileRowView
+      filename={attachment.filename}
+      author={author}
+      authorName={author?.name ?? "Unknown"}
+      when={timeAgo(new Date(message.created_at).toISOString(), { suffix: true })}
+      size={formatBytes(attachment.bytes)}
+      downloading={progress !== undefined}
+      onDownload={() => void saveAttachment(attachment)}
+    />
   );
 }

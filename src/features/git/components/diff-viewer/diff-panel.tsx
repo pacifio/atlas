@@ -4,17 +4,6 @@ import { listen } from "@tauri-apps/api/event";
 import type { FileDiffContentsLoader } from "@pierre/diffs";
 import { ArrowRight, ChevronDown } from "lucide-react";
 import { openReviewFile } from "../../lib/open-review-file";
-import { Button } from "@/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import { formatTime } from "@/lib/format-time";
 import type { EditTurn } from "@/features/chat/lib/turn-edits";
 import { getDiffFileContents, getDiffPreview, type DiffSource } from "../../lib/git-review-api";
@@ -24,6 +13,7 @@ import { combineReviews, useAttachedRootReviews } from "../../lib/use-root-revie
 import { useSessionRoots } from "@/features/chat/hooks/use-session-roots";
 import { useChatTabOfSession } from "@/features/chat/lib/review-comments";
 import { useDiffReviewComments } from "../../lib/use-diff-review-comments";
+import { SendReviewButton } from "./send-review-button";
 import {
   useSessionEditTurns,
   useTurnEdits,
@@ -45,6 +35,17 @@ import {
   useDiffIgnoreWhitespace,
   type DiffViewSource,
 } from "./diff-panel-view";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * The review diff: every changed file of the working tree or the branch,
@@ -428,6 +429,7 @@ function GitDiffPanel({
   );
   const annotations = useDiffReviewComments({
     chatTabId,
+    reviewTabId: tabId,
     section,
     files,
     displayPathOf: copyPathOf,
@@ -438,7 +440,14 @@ function GitDiffPanel({
       tabId={tabId}
       repoPath={repoPath}
       leading={leading}
-      actions={actions}
+      actions={
+        // Shown whenever the tab holds comments: a session that opens beside
+        // the diff later must not strand a review already written.
+        <>
+          <SendReviewButton tabId={tabId} />
+          {actions}
+        </>
+      }
       source={{
         key: collapseScopeKey,
         files,

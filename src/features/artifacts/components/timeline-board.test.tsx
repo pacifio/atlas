@@ -64,9 +64,13 @@ vi.mock("@tanstack/react-virtual", () => ({
         key: getItemKey(index),
         start: index * 80,
         size: 80,
+        end: index * 80 + 80,
       })),
     getTotalSize: () => count * 80,
     measureElement: () => {},
+    // The package calendar indexes this for its end space (measured
+    // here); a missing array would throw.
+    measurementsCache: [],
   }),
 }));
 

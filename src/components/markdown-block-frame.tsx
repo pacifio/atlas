@@ -21,9 +21,12 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { IconButton } from "@/ui/icon-button";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
+  IconButton,
+  Hint,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@tryatlas/design";
 
 /** A collapsed code block's height; past it, the button appears. Matches
  *  `.atlas-md-block[data-kind="code"][data-collapsed="true"] pre` in CSS. */

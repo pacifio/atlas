@@ -27,9 +27,9 @@ import {
   elicitationQuestionForm,
   parseElicitationSchema,
 } from "../lib/elicitation-schema";
-import { ApprovalCard } from "./approval-card";
+import { ApprovalCardView } from "./views/approval-card-view";
 import { ComposerDrawer } from "./composer-drawer";
-import { ElicitationModal, type PendingElicitation } from "./elicitation-modal";
+import { ElicitationModal, elicitationKey, type PendingElicitation } from "./elicitation-modal";
 
 export function SessionElicitation({
   pending,
@@ -61,7 +61,12 @@ export function SessionElicitation({
     return (
       <>
         <ComposerDrawer>{null}</ComposerDrawer>
-        <ElicitationModal pending={pending} onClose={onClose} remoteDriver={remoteDriver} />
+        <ElicitationModal
+          key={elicitationKey(pending)}
+          pending={pending}
+          onClose={onClose}
+          remoteDriver={remoteDriver}
+        />
       </>
     );
   }
@@ -93,8 +98,8 @@ export function SessionElicitation({
 
   return (
     <ComposerDrawer>
-      <ApprovalCard
-        key={pending.requestId}
+      <ApprovalCardView
+        key={elicitationKey(pending)}
         questions={form.questions}
         onSubmit={(answers) => respond("accept", elicitationAnswerContent(form, answers))}
         // `decline`, not `cancel`: declining answers "nothing, carry on" and the

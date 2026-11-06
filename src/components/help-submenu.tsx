@@ -19,7 +19,10 @@ import {
 import { toast } from "sonner";
 import { copyText } from "@/lib/clipboard";
 import { DISCORD_URL, DOCS_URL, GITHUB_URL, SITE_URL, X_URL } from "@/lib/atlas-links";
-import { GithubIcon } from "@/components/github-icon";
+import { GithubIcon } from "@/components/brand-marks";
+import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
+import { openSettingsSection } from "@/features/settings/lib/open-settings";
+import { updater } from "@/features/updater/lib/updater-api";
 import {
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -27,10 +30,7 @@ import {
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-} from "@/ui/dropdown-menu";
-import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
-import { openSettingsSection } from "@/features/settings/lib/open-settings";
-import { updater } from "@/features/updater/lib/updater-api";
+} from "@tryatlas/design";
 
 /** Help, community and the app's own links — and, at the foot, the update
  *  check and the running version. A submenu of the account menu. */

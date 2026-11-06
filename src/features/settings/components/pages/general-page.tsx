@@ -1,7 +1,7 @@
 import { isMac, isWindows } from "@/lib/platform";
 import { useAppProfile } from "@/lib/app-profile";
-import { Button } from "@/ui/button";
 import { useFeedbackStore } from "@/features/feedback/stores/feedback-store";
+import { replayAllTips } from "@/features/tips/lib/replay-tips";
 import {
   SettingsGroup,
   SettingsPage,
@@ -18,6 +18,7 @@ const TIME_FORMATS = [
 ] as const;
 
 import { ConfigErrorBanner } from "./config-file";
+import { Button } from "@tryatlas/design";
 
 export function GeneralPage() {
   // `.atlas` in the released app, `.atlas-dev` in a dev-profile build, which
@@ -78,6 +79,22 @@ export function GeneralPage() {
             control={<SettingSwitch setting="showHiddenFiles" />}
           />
           <SettingsRow setting="preferredEditor" control={<PreferredEditorSelect />} />
+        </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title="Tips">
+        <SettingsGroup>
+          <SettingsRow setting="showTips" control={<SettingSwitch setting="showTips" />} />
+          <SettingsRow
+            anchor="replay-tips"
+            title="Replay all tips"
+            description="Show every tip again, the next time you meet its feature."
+            control={
+              <Button variant="outline" size="sm" onClick={() => void replayAllTips()}>
+                Replay all tips
+              </Button>
+            }
+          />
         </SettingsGroup>
       </SettingsSection>
 

@@ -4,20 +4,7 @@ import { ArrowUpRight, Lock, MoreHorizontal, X } from "lucide-react";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { copyText } from "@/lib/clipboard";
 import { tildePath } from "@/lib/paths";
-import { Badge } from "@/ui/badge";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { SecretInput } from "@/ui/secret-input";
-import { Segmented } from "@/ui/segmented";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { ProviderLogo } from "@/components/provider-logo";
+import { ProviderLogo } from "@/components/brand-marks";
 import {
   PROVIDERS,
   PROVIDER_CATEGORIES,
@@ -33,6 +20,20 @@ import {
   SettingsSection,
 } from "../layout/settings-layout";
 import { SettingsSearch } from "../layout/settings-search";
+import { fileManagerName, revealInFileManagerLabel } from "@/lib/platform";
+import {
+  Badge,
+  Button,
+  Icon,
+  IconButton,
+  SecretInput,
+  Segmented,
+  Hint,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * Settings → Agents → Provider keys: an editor for the provider keys in the
@@ -125,7 +126,7 @@ export function ProviderKeysSection() {
             control={
               target && (
                 <Button variant="outline" size="sm" onClick={() => void showInFinder(target)}>
-                  Show in Finder
+                  {revealInFileManagerLabel}
                 </Button>
               )
             }
@@ -185,7 +186,9 @@ async function showInFinder(file: string) {
   try {
     await revealItemInDir(file);
   } catch (e) {
-    toast.error(`Couldn't show it in Finder: ${e instanceof Error ? e.message : String(e)}`);
+    toast.error(
+      `Couldn't show it in ${fileManagerName}: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 
@@ -251,8 +254,9 @@ function ProviderKeyRow({
   const reveal = async () => {
     try {
       setRevealed((await byok.reveal(envVar)) ?? "");
-    } catch {
-      toast.error("Couldn't read that key.");
+    } catch (e) {
+      // The cause rides along so "Fix with agent" has something to go on.
+      toast.error(`Couldn't read ${envVar}`, { description: errorText(e) });
     }
   };
 
@@ -260,8 +264,8 @@ function ProviderKeyRow({
     try {
       const value = await byok.reveal(envVar);
       if (value && (await copyText(value))) toast(`Copied ${envVar}`);
-    } catch {
-      toast.error("Couldn't read that key.");
+    } catch (e) {
+      toast.error(`Couldn't read ${envVar}`, { description: errorText(e) });
     }
   };
 
@@ -356,7 +360,7 @@ function ProviderKeyRow({
                   <DropdownMenuItem onClick={() => void copy()}>Copy key</DropdownMenuItem>
                   {entry.file && (
                     <DropdownMenuItem onClick={() => void showInFinder(entry.file!)}>
-                      Show in Finder
+                      {revealInFileManagerLabel}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>

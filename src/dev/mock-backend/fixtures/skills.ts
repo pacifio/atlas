@@ -808,7 +808,7 @@ function previewOf(source: string): Pack {
 // ── The ACP registry (Settings → Agents) ────────────────────────────────────
 
 /** A monochrome `currentColor` glyph, the shape registry manifests publish —
- *  `ExternalAgentIcon` masks these with the surrounding text color, which is a
+ *  `ExternalAgentMark` masks these with the surrounding text color, which is a
  *  different render path from a self-colored icon, so both are represented. */
 function monoIcon(path: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor">${path}</svg>`;

@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import type { AgentMetaResolver } from "@/features/agents/lib/agent-identity";
+import { useAgentMetaResolver } from "@/features/agents/lib/agent-meta-context";
 import { fmtCost, fmtTokens } from "@/features/monitor/lib/usage-format";
 import { useUsageStore } from "../stores/usage-store";
 import type {
@@ -71,6 +73,8 @@ export interface UsageView {
   /** Distinct sessions per day, aligned to `days`. */
   sessionDays: number[];
   insightList: Insight[];
+  /** Names agents in labels; pass it to any `derive.ts` call made from this view. */
+  resolveAgent: AgentMetaResolver;
 }
 
 const EMPTY: DailyBucket[] = [];
@@ -81,6 +85,7 @@ export function filterSessions(
   sessions: SessionRow[],
   q: string,
   data: UsageDashboard | null,
+  resolveAgent: AgentMetaResolver,
 ): SessionRow[] {
   const needle = q.trim().toLowerCase();
   if (!needle) return sessions;
@@ -90,7 +95,7 @@ export function filterSessions(
       s.projectPath,
       projectLabel(s.projectPath, data),
       s.agent,
-      agentDisplay(s.agent),
+      agentDisplay(s.agent, resolveAgent),
       s.model,
       modelDisplay(s.model),
     ].some((v) => v.toLowerCase().includes(needle)),
@@ -117,6 +122,7 @@ export function useUsageView(): UsageView {
   // Resolved theme colours, rebuilt on `atlas:theme-applied` — the chart's
   // segments are inline styles and cannot follow a custom property.
   const { seriesColor, otherColor } = useSeriesPalette();
+  const resolveAgent = useAgentMetaResolver();
 
   const resolved = useMemo(() => resolveRange(range), [range]);
   const prev = useMemo(() => previousRange(resolved), [resolved]);
@@ -142,17 +148,20 @@ export function useUsageView(): UsageView {
     [data, prev, facets],
   );
   const sessions = useMemo(
-    () => filterSessions(facetedSessions, search, data),
-    [facetedSessions, search, data],
+    () => filterSessions(facetedSessions, search, data, resolveAgent),
+    [facetedSessions, search, data, resolveAgent],
   );
   const sessionCount = useMemo(() => distinctSessions(facetedSessions), [facetedSessions]);
 
   // Range-filtered but NOT facet-filtered, so picking one value never hides the others.
-  const facetOptions = useMemo(() => facetsOf(inRange, data), [inRange, data]);
+  const facetOptions = useMemo(
+    () => facetsOf(inRange, data, resolveAgent),
+    [inRange, data, resolveAgent],
+  );
 
   const chart = useMemo(
-    () => series(rows, groupBy, metric, resolved, data, seriesColor, otherColor),
-    [rows, groupBy, metric, resolved, data, seriesColor, otherColor],
+    () => series(rows, groupBy, metric, resolved, data, seriesColor, otherColor, resolveAgent),
+    [rows, groupBy, metric, resolved, data, seriesColor, otherColor, resolveAgent],
   );
 
   const eff = useMemo(() => efficiency(totals, sessionCount), [totals, sessionCount]);
@@ -169,8 +178,17 @@ export function useUsageView(): UsageView {
 
   const insightList = useMemo(
     () =>
-      insights({ rows, totals, prevTotals, sessions: facetedSessions, data, fmtCost, fmtTokens }),
-    [rows, totals, prevTotals, facetedSessions, data],
+      insights({
+        rows,
+        totals,
+        prevTotals,
+        sessions: facetedSessions,
+        data,
+        fmtCost,
+        fmtTokens,
+        resolveAgent,
+      }),
+    [rows, totals, prevTotals, facetedSessions, data, resolveAgent],
   );
 
   return {
@@ -202,5 +220,6 @@ export function useUsageView(): UsageView {
     days,
     sessionDays,
     insightList,
+    resolveAgent,
   };
 }

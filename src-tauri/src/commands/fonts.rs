@@ -32,6 +32,8 @@ pub async fn list_font_families() -> Result<Option<Vec<FontFamily>>, String> {
 /// Fold per-face entries into one per family: a family is monospace when any
 /// of its faces is. Names starting with `.` are the OS's private UI fonts
 /// (`.SF NS`, `.AppleSystemUIFont`); CSS cannot address them by name.
+// Called by the macOS and Linux listings and the tests; Windows has none.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn collect(faces: impl IntoIterator<Item = (String, bool)>) -> Vec<FontFamily> {
     let mut families = std::collections::BTreeMap::<String, bool>::new();
     for (name, monospace) in faces {

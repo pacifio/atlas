@@ -1,3 +1,4 @@
+import { HintGroup } from "@tryatlas/design";
 /**
  * The reader's footer pills.
  *
@@ -12,8 +13,6 @@
  * these buttons, and the panel grows out of it over the pill (`inPill` on
  * each morph).
  */
-
-import { HintGroup } from "@/ui/hint-group";
 
 /** A button inside a {@link FooterPill}: the sidebar foot's `size-7` round
  *  ghost target. `data-popup-open` keeps a popover's trigger lit while open. */

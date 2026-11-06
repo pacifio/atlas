@@ -12,14 +12,12 @@
 
 import { Popover } from "@base-ui/react/popover";
 
-import { Button } from "@/ui/button";
-import { HintItem } from "@/ui/hint-group";
-
 import { sessionDisplayTitle } from "../lib/session-title";
 import { useRemoteControl } from "../lib/use-remote-control";
 import { useChatStore } from "../stores/chat-store";
 import { RcRoomPanel } from "./rc-room-panel";
 import { hintFor, RcStatusPill } from "./rc-status-pill";
+import { Button, HintItem } from "@tryatlas/design";
 
 export function RcHeaderMenu({ tabId }: { tabId: string }) {
   // Read by tab: the controls are portalled out of the chat panel's tree, and

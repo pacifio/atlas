@@ -57,7 +57,7 @@ green = "#bbe67e"
 cyan = "#5ccfe6"
 blue = "#73d0ff"
 purple = "#d4bfff"
-pink = "#f29e74"
+pink = "#f5a6c8"
 
 [dark.keys]
 "border.subtle" = "#17171c"
@@ -146,7 +146,7 @@ green = "#4f8f1f"
 cyan = "#2b8fae"
 blue = "#2b7fc4"
 purple = "#8a5fd0"
-pink = "#c95f4e"
+pink = "#c2427e"
 
 [light.keys]
 "border.strong" = "#b9bdc2"

@@ -287,6 +287,11 @@ export const listenAuthRunProgress = (
  * Subscribe to the single multiplexed delta stream. Every delta carries
  * `agent_id` + `session_id` so the consumer can route to the right tab.
  */
+/** An env var was exported or the login-shell probe landed (`byok.rs`): the
+ *  sign-in env checklist re-checks. A Tauri event, not a window one. */
+export const listenAuthEnvUpdated = (handler: () => void): Promise<UnlistenFn> =>
+  listen("atlas:byok-env-updated", () => handler());
+
 export const listenAgents = (handler: (env: AgentStreamEvent) => void): Promise<UnlistenFn> =>
   listen<AgentStreamEvent>("atlas:agents", (e) => handler(e.payload));
 

@@ -13,11 +13,10 @@ import { SquareTerminal } from "lucide-react";
 
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { sessionScope } from "@/features/chat/lib/session-scope";
-import { HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
 
 import { toggleSessionDrawer } from "../lib/session-drawer";
 import { useSessionDrawerStore } from "../stores/session-drawer-store";
+import { HintItem, IconButton } from "@tryatlas/design";
 
 export function TerminalDrawerToggle({ tabId }: { tabId: string }) {
   const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId);

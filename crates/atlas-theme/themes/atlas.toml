@@ -60,7 +60,7 @@ green = "#9ecf8a"
 cyan = "#7fd1e8"
 blue = "#6796e6"
 purple = "#c9a2f5"
-pink = "#e59a72"
+pink = "#f0a0c8"
 
 [dark.keys]
 "border.subtle" = "#141414"
@@ -80,6 +80,12 @@ pink = "#e59a72"
 # Pinned: the derived 12% mix is perceptual (OKLab) and lands at #060606 on a
 # pure-black ground, which is no colour at all. One visible step up instead.
 "terminal.ansi.black" = "#1f1f1f"
+# Pinned: the palette's yellow is a terminal's pure #ffff00, right for ANSI
+# yellow and the warning status but a glare as a label. The chip yellow sits
+# with the rest of the palette (OKLCH L 0.84, C 0.12, the others' lightness
+# and chroma) at hue 97, clear of orange's 74 so the two chips never read as
+# one; 10.4:1 on the popover.
+"hue.yellow" = "#e0ca66"
 # BEGIN syntax from @pierre/theme 2.0.0 (pierre-dark), written by `bun run theme:pierre`
 "syntax.attribute" = "#60d199"
 "syntax.comment" = "#737373"

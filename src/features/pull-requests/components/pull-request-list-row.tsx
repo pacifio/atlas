@@ -14,7 +14,6 @@ import { CircleAlert, Layers, MessageSquare, Search } from "lucide-react";
 
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
 
 import type { PullRequestChangeBreakdown } from "../lib/pull-request-change-breakdown";
 import type { PullRequestStackMembership } from "../lib/pull-request-list-logic";
@@ -29,6 +28,7 @@ import {
   REVIEW_DECISION_PRESENTATION,
 } from "./pull-request-presentation";
 import { PullRequestQuickActions } from "./pull-request-quick-actions";
+import { Popover, PopoverContent, PopoverTrigger } from "@tryatlas/design";
 
 /** The row's slot height, which the list virtualizes on. */
 export const PULL_REQUEST_ROW_HEIGHT = 52;

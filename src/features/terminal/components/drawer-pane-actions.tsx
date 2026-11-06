@@ -10,10 +10,8 @@
 
 import { Maximize2, Plus, Rows2, Trash2, X } from "lucide-react";
 
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
-
 import { useTerminalStore, type PaneNode } from "../stores/terminal-store";
+import { HintGroup, HintItem, IconButton } from "@tryatlas/design";
 
 export function DrawerPaneActions({
   pane,

@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Button } from "@/ui/button";
 import { useAppStore } from "@/features/app/stores/app-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import {
@@ -11,6 +10,7 @@ import {
 } from "../layout/settings-layout";
 import { SettingSwitch } from "../layout/setting-controls";
 import { EmbeddingModelSection } from "./embedding-model-section";
+import { Button } from "@tryatlas/design";
 
 export function MemoryPage() {
   const settings = useSettingsStore.use.settings();

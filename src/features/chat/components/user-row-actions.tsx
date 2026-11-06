@@ -77,19 +77,11 @@
 // when it changes under the pointer); the copied state rides on the icon.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CopyGlyph } from "@/ui/animated-icon";
 import { CornerUpRight, MoreHorizontal, Pin, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/clipboard";
 import { formatDayAwareTime, formatFullTimestamp } from "@/lib/format-time";
-import { HintGroup, HintItem } from "@/ui/hint-group";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
 import { retryLastTurn } from "../lib/retry-turn";
 import { userFooterActions } from "../lib/message-footer";
 import { useChatPinsStore } from "../stores/chat-pins-store";
@@ -102,6 +94,15 @@ import {
   useThreadOpenSignal,
 } from "../stores/chat-comments-store";
 import { useRowHasComments } from "./chat-comment-pills";
+import {
+  CopyGlyph,
+  HintGroup,
+  HintItem,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@tryatlas/design";
 
 /**
  * One footer icon button: a 24px ghost square around a 12px glyph, filling on

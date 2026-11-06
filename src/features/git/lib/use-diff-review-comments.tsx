@@ -29,6 +29,7 @@ import {
   useComposerReviewComments,
 } from "@/features/chat/lib/review-comments";
 import type { MentionReviewComment } from "@/features/chat/lib/mentions";
+import { useReviewDraft, useReviewDraftStore } from "../stores/review-draft-store";
 import {
   itemIdOf,
   type DiffAnnotation,
@@ -130,25 +131,32 @@ export function placeReviewComments(
 }
 
 /**
- * The annotation source for a diff beside a session: its comments, and the
- * gutter that starts one. Null without a session (`chatTabId`): elsewhere the
- * diff has no one to send a comment to, and offers none.
+ * The annotation source for a diff: its comments, and the gutter that starts
+ * one. Beside a session (`chatTabId`) each comment goes into its composer;
+ * without one they are held for the tab (`reviewTabId`) as a review, until
+ * "Send review to agent" sends them together. Null with neither.
  */
 export function useDiffReviewComments({
   chatTabId,
+  reviewTabId = null,
   section,
   files,
   displayPathOf,
 }: {
-  /** The composer the comments go to; null hides the feature. */
+  /** The composer the comments go to. */
   chatTabId: string | null;
+  /** Without a composer: the tab whose held review they join. */
+  reviewTabId?: string | null;
   section: ReviewSection;
   files: readonly ReviewFile[];
   /** The path the agent is told (the file's path in its own root), when not
    *  its path in the list. */
   displayPathOf?: (path: string) => string | undefined;
 }): DiffAnnotationSource | null {
-  const all = useComposerReviewComments(chatTabId);
+  const inComposer = useComposerReviewComments(chatTabId);
+  const localTab = chatTabId ? null : reviewTabId;
+  const held = useReviewDraft(localTab);
+  const all = localTab ? held : inComposer;
   const sectionId = section.id;
   const comments = useMemo(() => all.filter((c) => c.sectionId === sectionId), [all, sectionId]);
 
@@ -209,7 +217,7 @@ export function useDiffReviewComments({
     [sectionId, section.title, setDraft],
   );
 
-  const deps = { draft, chatTabId, setDraft };
+  const deps = { draft, chatTabId, localTab, setDraft };
   const renderDeps = useRef(deps);
   renderDeps.current = deps;
   const render = useCallback(
@@ -225,6 +233,7 @@ export function useDiffReviewComments({
             <DiffCommentAnnotation
               key={entry.id}
               kind={entry.kind}
+              destination={renderDeps.current.localTab ? "review" : "prompt"}
               rangeLabel={entry.rangeLabel}
               text={entry.kind === "draft" ? draftText.current : entry.text}
               onTextChange={(text) => {
@@ -232,15 +241,22 @@ export function useDiffReviewComments({
               }}
               onCancel={() => renderDeps.current.setDraft(null)}
               onComment={(text) => {
-                const { draft, chatTabId, setDraft } = renderDeps.current;
-                if (!draft || !chatTabId || draft.id !== entry.id) return;
+                const { draft, chatTabId, localTab, setDraft } = renderDeps.current;
+                if (!draft || draft.id !== entry.id) return;
                 const mention: MentionReviewComment = { ...draft.comment, id: draft.id, text };
-                if (linkReviewCommentToComposer(chatTabId, mention)) setDraft(null);
-                else toast.error("The session's composer isn't open, so the comment can't go in.");
+                if (localTab) {
+                  useReviewDraftStore.getState().actions.add(localTab, mention);
+                  setDraft(null);
+                } else if (chatTabId && linkReviewCommentToComposer(chatTabId, mention)) {
+                  setDraft(null);
+                } else {
+                  toast.error("The session's composer isn't open, so the comment can't go in.");
+                }
               }}
               onDelete={() => {
-                const { chatTabId } = renderDeps.current;
-                if (chatTabId) unlinkReviewComment(chatTabId, entry.id);
+                const { chatTabId, localTab } = renderDeps.current;
+                if (localTab) useReviewDraftStore.getState().actions.remove(localTab, entry.id);
+                else if (chatTabId) unlinkReviewComment(chatTabId, entry.id);
               }}
             />
           ))}
@@ -271,5 +287,5 @@ export function useDiffReviewComments({
     }),
     [of, render, options, selectedLines],
   );
-  return chatTabId ? source : null;
+  return chatTabId || localTab ? source : null;
 }

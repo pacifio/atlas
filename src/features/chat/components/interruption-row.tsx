@@ -1,12 +1,12 @@
 import { memo, useState } from "react";
 import { ChevronRight, CornerDownRight, MoonStar, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
 import { CONTENT_COLUMN } from "../lib/row-metrics";
 import { CONTINUE_AFTER_SLEEP, interruptionHeadline } from "../lib/interruption-copy";
 import { retryLastTurn } from "../lib/retry-turn";
 import type { InterruptionRow } from "../lib/turn-rows";
 import { ICON_PX, ICON_STROKE } from "./tool-glyph";
+import { Button } from "@tryatlas/design";
 
 /**
  * A turn something outside the conversation cut into — today, the computer
@@ -48,7 +48,7 @@ export const InterruptionRowView = memo(function InterruptionRowView({
   return (
     <div data-testid="interruption-row" className={cn(CONTENT_COLUMN, "pt-1 pb-4")}>
       <div className="flex min-h-[26px] items-center gap-2 text-base text-[var(--muted-foreground)]">
-        <span className="flex w-4 shrink-0 justify-center text-[var(--atlas-status-warning-foreground)]">
+        <span className="flex w-4 shrink-0 justify-center text-warning">
           <MoonStar size={ICON_PX} strokeWidth={ICON_STROKE} />
         </span>
         {/* Not `flex-1`: the actions follow the sentence they answer rather

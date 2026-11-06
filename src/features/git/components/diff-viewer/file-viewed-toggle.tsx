@@ -1,7 +1,7 @@
 import { createContext, memo, use, type ReactNode } from "react";
 import { Checkbox } from "@base-ui/react/checkbox";
 import { Check } from "lucide-react";
-import { Hint } from "@/ui/tooltip";
+import { Hint } from "@tryatlas/design";
 
 /** What a file header's "Viewed" box reads and writes. */
 export interface FileViewedState {
@@ -46,7 +46,7 @@ export const FileViewedToggle = memo(function FileViewedToggle({
         <Checkbox.Root
           checked={viewed}
           onCheckedChange={(next) => state.setViewed(id, path, next)}
-          className="flex size-3.5 shrink-0 items-center justify-center rounded-sm border border-[var(--atlas-border-strong)] bg-transparent text-primary-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring data-checked:border-primary data-checked:bg-primary"
+          className="flex size-3.5 shrink-0 items-center justify-center rounded-sm border border-border-strong bg-transparent text-primary-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring data-checked:border-primary data-checked:bg-primary"
         >
           <Checkbox.Indicator>
             <Check size={10} strokeWidth={3} />

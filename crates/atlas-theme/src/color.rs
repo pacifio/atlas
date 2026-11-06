@@ -9,8 +9,8 @@
 //!    `oklch()`. Safe only because every caller compares colours from one file
 //!    in one notation.
 //!  - **Arithmetic** ([`parse`], [`mix`], [`with_alpha`], [`readable`]) for the
-//!    `[[base]]` rules (`derive.rs`). This is a port of
-//!    `src/features/theme/color.ts`, operation for operation, and the golden
+//!    `[[base]]` rules (`derive.rs`). This is a port of `@tryatlas/design`'s
+//!    `src/theme/color.ts`, operation for operation, and the golden
 //!    fixture `base-derivation.json` holds the two to the same output — so
 //!    change both or neither.
 

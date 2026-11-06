@@ -7,7 +7,7 @@
     "name": "Adib Mohsin",
     "email": "adibmohsin.root@gmail.com",
     "phone": "",
-    "description": "Adib Mohsin is the founder and maintainer of Atlas, source control for AI coding agents, based in Dhaka, Bangladesh. He was an early core contributor to Headroom (70k+ stars), where he built the Go and TypeScript SDKs and wrote the docs, and he wrote USearch's Zig binding.",
+    "description": "Adib Mohsin is the founder and maintainer of Atlas, the agentic visibility and control layer for teams shipping with coding agents, based in Dhaka, Bangladesh. He was an early core contributor to Headroom (70k+ stars), where he built the Go and TypeScript SDKs and wrote the docs, and he wrote USearch's Zig binding.",
     "webpageUrl": {
       "url": "https://tryatlas.cc",
       "wellKnown": "https://tryatlas.cc/.well-known/funding-manifest-urls"
@@ -17,7 +17,7 @@
     {
       "guid": "atlas",
       "name": "Atlas",
-      "description": "Atlas is source control for AI coding agents. When several people on a team run coding agents on one codebase, git shows the diff but not whose agent made it or what it was asked to do. Atlas tracks which teammate's coding agent changed what and links commits to the sessions and prompts behind them. Teammates collaborate in real time in a shared workspace (not an IDE). The shared timeline is fully open source. A CLI plugs into a team's existing workspace in about 3 minutes, because we learned teams won't switch their stack. Atlas has 9k+ GitHub stars, 500+ weekly active users and 4B+ tokens processed, and it is free to use. Docs: https://docs.tryatlas.cc",
+      "description": "Atlas is the agentic visibility and control layer for teams shipping with coding agents. When a whole engineering team runs agents on one codebase, git shows the diff but not whose agent made it or what it was told. Atlas records every agent session, links each commit to the session and prompt behind it, and puts the team's sessions on one shared timeline where teammates comment on each other's work while the agent is still running. For engineers it is a control-surface IDE built around agents' context: memory shared across agents, remote control of a live session, and editor, terminal and git in one window. For engineering managers it sets AI spend against the commits it shipped. The shared timeline is fully open source. A CLI plugs the same recording and shared memory into the agents a team already runs in a terminal in about 3 minutes, because we learned teams won't switch their stack. Atlas has 9k+ GitHub stars, 500+ weekly active users and 4B+ tokens processed, and it is free to use. Docs: https://docs.tryatlas.cc",
       "webpageUrl": {
         "url": "https://tryatlas.cc",
         "wellKnown": ""

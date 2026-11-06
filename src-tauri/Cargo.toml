@@ -278,6 +278,11 @@ windows = { version = "0.62", features = [
 # resolves (the lockfile also holds a 4.x for other crates), default features
 # (async-io), so no new resolution.
 zbus = "5"
+# GTK's clipboard (`commands::clipboard`): WebKitGTK's paste event carries no
+# image and no readable file list, so a pasted screenshot or a copied file is
+# read off the clipboard GTK holds. 0.18 is the gtk tao and wry already
+# resolve; pinned here for the direct calls, so nothing new compiles.
+gtk = "0.18"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native NSWindow access for the titlebar double-click "zoom" (AppKit

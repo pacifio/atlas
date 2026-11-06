@@ -1,7 +1,5 @@
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useMemo } from "react";
-import { Hash, Loader2, Lock, MessageCircle, MessagesSquare, Plus, Users, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import { CommsConversation } from "./comms-conversation";
 import { MediaLightbox } from "./media-lightbox";
 import { primeCommsMarkdown } from "./message-body";
@@ -9,13 +7,21 @@ import { CommsHome } from "./comms-home";
 import { CommsNotConnected } from "./comms-not-connected";
 import { CommsSkeleton } from "./comms-skeleton";
 import { useCommsStore } from "../stores/comms-store";
-import { comms, type ConnReason, type ConnectionState } from "../lib/comms-api";
+import { comms } from "../lib/comms-api";
 import { useOrgStore } from "@/features/organisations/stores/org-store";
 import { useAuthStore } from "@/features/auth/stores/auth-store";
 import { useMembersStore } from "@/features/organisations/stores/members-store";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { byRecency, conversationTitle, memberName } from "../lib/derive";
 import type { ChatConversation, OrgMemberProfile } from "../types";
+import {
+  CommsBodyView,
+  CommsConnectingView,
+  CommsPanelView,
+  CommsSplitView,
+  CommsTabsView,
+  type CommsTabKind,
+} from "./views/comms-panel-view";
 
 /**
  * Team chat, a surface tab and a destination (⌘⇧C, ADR-0024).
@@ -32,6 +38,7 @@ import type { ChatConversation, OrgMemberProfile } from "../types";
  * conversation opened in one is the one the other shows.
  */
 export function CommsPanel({ split = false }: { split?: boolean } = {}) {
+  useTipOnMount("team-chat");
   const conversations = useCommsStore.use.conversations();
   const reads = useCommsStore.use.reads();
   const memberList = useCommsStore.use.members();
@@ -154,11 +161,9 @@ export function CommsPanel({ split = false }: { split?: boolean } = {}) {
     // an empty 29px strip labelled "Team Chat" only repeats what the panel
     // already is. The placeholder gets the whole surface.
     return (
-      <div className="flex h-full flex-col bg-background">
-        <CommsSurface>
-          <CommsNotConnected org={activeOrg} />
-        </CommsSurface>
-      </div>
+      <CommsPanelView>
+        <CommsNotConnected org={activeOrg} />
+      </CommsPanelView>
     );
   }
 
@@ -172,266 +177,89 @@ export function CommsPanel({ split = false }: { split?: boolean } = {}) {
   if (conversations.length === 0 && connection.state !== "open") {
     const terminal = connection.state === "unavailable";
     return (
-      <div className="flex h-full flex-col bg-background">
-        <CommsSurface>
-          {terminal ? (
-            <CommsConnecting
-              state={connection.state}
-              reason={connection.reason}
-              onRetry={() => void comms.reconnect().catch(() => {})}
-            />
-          ) : (
-            <CommsSkeleton />
-          )}
-        </CommsSurface>
-      </div>
+      <CommsPanelView>
+        {terminal ? (
+          <CommsConnectingView
+            state={connection.state}
+            reason={connection.reason}
+            onRetry={() => void comms.reconnect().catch(() => {})}
+          />
+        ) : (
+          <CommsSkeleton />
+        )}
+      </CommsPanelView>
     );
   }
 
   if (split) {
     return (
-      // A rule along the top, under the window's bar, so the view starts
-      // where the bar ends.
-      <div className="flex h-full flex-col bg-background">
-        <CommsSurface>
-          <div className="relative flex min-h-0 flex-1 overflow-hidden border-t border-border">
-            <aside
-              aria-label="Channels and people"
-              className="flex w-72 shrink-0 flex-col border-r border-border"
-            >
-              <CommsHome sidebar activeConvId={activeConv?.id ?? null} />
-            </aside>
-            <div className="flex min-w-0 flex-1">
-              {activeConv ? (
-                // Keyed so each conversation mounts fresh.
-                <div key={activeConv.id} className="flex min-w-0 flex-1">
-                  <CommsConversation conv={activeConv} showBack={false} />
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </CommsSurface>
-        <MediaLightbox />
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex h-full flex-col bg-background">
-      {/* Only with two or more open: one view needs no tabs of its own under
-          the column's "Team chat" tab, and a conversation's header already
-          leads back home. ⌘-click a conversation to open a second. */}
-      {tabs.length > 1 && (
-        <ConversationBar>
-          <div
-            className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto hide-scrollbar"
-            // A gradient overlay in the backdrop colour never quite matched it —
-            // the vibrant grain composites on top of the token, so the patch
-            // read as its own rectangle. A mask fades the CONTENT instead, and
-            // whatever is behind it shows through exactly.
-            style={{
-              maskImage: "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-              WebkitMaskImage:
-                "linear-gradient(to right, black, black calc(100% - 28px), transparent)",
-            }}
-          >
-            {tabs.map((tab) => (
-              <TabButton
-                key={tab.id}
-                conv={tab.convId ? (convById.get(tab.convId) ?? null) : null}
-                members={members}
-                me={me}
-                active={tab.id === activeTabId}
-                read={tab.convId ? readBy.get(tab.convId) : undefined}
-                onSelect={() => actions.setActiveTab(tab.id)}
-                onClose={() => actions.closeTab(tab.id)}
-              />
-            ))}
-          </div>
-
-          {/* The project sidebar's add-project button, verbatim. */}
-          <div className="flex shrink-0 items-center pr-1.5">
-            <Hint label="New tab">
-              <button
-                type="button"
-                onClick={() => actions.newTab()}
-                className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--border)] text-[var(--secondary-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] outline-none cursor-pointer"
-              >
-                <Plus size={14} />
-              </button>
-            </Hint>
-          </div>
-        </ConversationBar>
-      )}
-
-      {/* `overflow-hidden` so a view can never paint outside the panel. */}
-      <CommsSurface>
-        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+      <CommsPanelView overlay={<MediaLightbox />}>
+        <CommsSplitView list={<CommsHome sidebar activeConvId={activeConv?.id ?? null} />}>
           {activeConv ? (
             // Keyed so each conversation mounts fresh.
             <div key={activeConv.id} className="flex min-w-0 flex-1">
-              <CommsConversation conv={activeConv} />
+              <CommsConversation conv={activeConv} showBack={false} />
             </div>
-          ) : (
-            <CommsHome />
-          )}
-        </div>
-      </CommsSurface>
-      <MediaLightbox />
-    </div>
-  );
-}
-
-/** The open conversations, as tabs, under the column's own tab strip. */
-function ConversationBar({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--border)] pl-1.5">
-      {children}
-    </div>
-  );
-}
-
-/** The conversation's surface, flat under the conversation bar. */
-function CommsSurface({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--background)]">
-      {children}
-    </div>
-  );
-}
-
-function TabButton({
-  conv,
-  members,
-  me,
-  active,
-  read,
-  onSelect,
-  onClose,
-}: {
-  /** `null` = this view is at home. */
-  conv: ChatConversation | null;
-  members: Map<string, OrgMemberProfile>;
-  me: string;
-  active: boolean;
-  read: { unread: number; mentions: number } | undefined;
-  onSelect: () => void;
-  onClose: () => void;
-}) {
-  const label =
-    conv === null
-      ? "Chats"
-      : conv.kind === "channel"
-        ? conv.name
-        : conversationTitle(conv, members, me);
-  const unread = Number(read?.unread ?? 0);
-  const mentions = Number(read?.mentions ?? 0);
-
-  const icon =
-    conv === null ? (
-      <MessagesSquare size={11} className="shrink-0 opacity-70" />
-    ) : conv.kind === "channel" ? (
-      conv.visibility === "private" ? (
-        <Lock size={10} className="shrink-0 opacity-70" />
-      ) : (
-        <Hash size={11} className="shrink-0 opacity-70" />
-      )
-    ) : conv.kind === "group_dm" ? (
-      <Users size={11} className="shrink-0 opacity-70" />
-    ) : (
-      <MessageCircle size={11} className="shrink-0 opacity-70" />
-    );
-
-  return (
-    <div
-      role="tab"
-      aria-selected={active}
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      className={cn(
-        "group/tab relative flex h-[26px] shrink-0 cursor-pointer items-center gap-1.5 rounded-lg pl-2.5 text-sm font-medium select-none",
-        "transition-[background-color,color] duration-150",
-        "pr-6",
-        active
-          ? "bg-[var(--atlas-element-selected)] text-foreground"
-          : "text-muted-foreground hover:bg-[var(--atlas-element-hover)] hover:text-secondary-foreground",
-      )}
-    >
-      {icon}
-      <span className="max-w-[110px] truncate">{label}</span>
-
-      {mentions > 0 ? (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--foreground)]" />
-      ) : unread > 0 ? (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--atlas-status-success-foreground)]" />
-      ) : null}
-
-      <Hint label="Close tab">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-          }}
-          className={cn(
-            "absolute right-1 top-1/2 -translate-y-1/2",
-            "inline-flex h-4 w-4 items-center justify-center rounded-full",
-            "text-muted-foreground opacity-0 scale-90 group-hover/tab:opacity-100 group-hover/tab:scale-100 focus-visible:opacity-100 focus-visible:scale-100",
-            "transition-[opacity,transform] duration-150 hover:bg-[var(--atlas-element-emphasis)] hover:text-foreground cursor-pointer",
-          )}
-        >
-          <X size={10} strokeWidth={2.2} />
-        </button>
-      </Hint>
-    </div>
-  );
-}
-
-function CommsConnecting({
-  state,
-  reason,
-  onRetry,
-}: {
-  state: ConnectionState;
-  reason: ConnReason | null;
-  onRetry: () => void;
-}) {
-  // `unavailable` is terminal — the supervisor stopped because retrying cannot
-  // help — so it gets an explanation and a manual retry instead of a spinner
-  // that would promise progress nobody is making.
-  if (state === "unavailable") {
-    return (
-      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
-        <div className="text-sm font-medium text-foreground">Chat is unavailable</div>
-        <p className="max-w-[220px] text-xs leading-relaxed text-secondary-foreground">
-          {reason === "not_a_member"
-            ? "Your account isn't a member of this organization's chat."
-            : reason === "evicted"
-              ? "You were removed from this organization."
-              : "Couldn't authenticate with the chat service."}
-        </p>
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-1 flex h-[26px] items-center rounded-md border border-border bg-element-hover px-3 text-xs font-medium text-foreground transition-colors hover:bg-element-active cursor-pointer"
-        >
-          Try again
-        </button>
-      </div>
+          ) : null}
+        </CommsSplitView>
+      </CommsPanelView>
     );
   }
+
   return (
-    <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
-      <Loader2 size={16} className="animate-spin text-muted-foreground" />
-      <div className="text-sm text-secondary-foreground">
-        {state === "backoff" ? "Reconnecting…" : "Connecting to team chat…"}
-      </div>
-    </div>
+    <CommsPanelView
+      // Only with two or more open: one view needs no tabs of its own under
+      // the column's "Team chat" tab, and a conversation's header already
+      // leads back home. ⌘-click a conversation to open a second.
+      bar={
+        tabs.length > 1 && (
+          <CommsTabsView
+            tabs={tabs.map((tab) => {
+              const conv = tab.convId ? (convById.get(tab.convId) ?? null) : null;
+              const read = tab.convId ? readBy.get(tab.convId) : undefined;
+              return {
+                id: tab.id,
+                title: tabTitle(conv, members, me),
+                kind: tabKind(conv),
+                unread: Number(read?.unread ?? 0),
+                mentions: Number(read?.mentions ?? 0),
+              };
+            })}
+            activeId={activeTabId}
+            onSelect={(id) => actions.setActiveTab(id)}
+            onClose={(id) => actions.closeTab(id)}
+            onNew={() => actions.newTab()}
+          />
+        )
+      }
+      overlay={<MediaLightbox />}
+    >
+      <CommsBodyView>
+        {activeConv ? (
+          // Keyed so each conversation mounts fresh.
+          <div key={activeConv.id} className="flex min-w-0 flex-1">
+            <CommsConversation conv={activeConv} />
+          </div>
+        ) : (
+          <CommsHome />
+        )}
+      </CommsBodyView>
+    </CommsPanelView>
   );
+}
+
+/** A tab's label. `null` = this view is at home. */
+function tabTitle(
+  conv: ChatConversation | null,
+  members: Map<string, OrgMemberProfile>,
+  me: string,
+): string {
+  if (conv === null) return "Chats";
+  return conv.kind === "channel" ? (conv.name ?? "") : conversationTitle(conv, members, me);
+}
+
+function tabKind(conv: ChatConversation | null): CommsTabKind {
+  if (conv === null) return "home";
+  if (conv.kind === "channel") return conv.visibility === "private" ? "private" : "channel";
+  return conv.kind === "group_dm" ? "group" : "dm";
 }

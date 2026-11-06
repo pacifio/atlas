@@ -1,16 +1,8 @@
 import { create } from "zustand";
 import { createSelectors } from "@/lib/create-selectors";
 import { appearanceForMode, applyTheme } from "../apply-theme";
-import {
-  getTheme,
-  listThemes,
-  onThemesChanged,
-  type Theme,
-  type ThemeMode,
-  type ThemeSummary,
-  type ThemeWarning,
-} from "../lib/theme-api";
-import type { ThemeOverride } from "../resolve-theme";
+import { getTheme, listThemes, onThemesChanged, type ThemeSummary } from "../lib/theme-api";
+import type { Theme, ThemeMode, ThemeWarning, ThemeOverride } from "@tryatlas/design/theme";
 
 /** The id every install ships with, and the last thing `apply` tries. */
 const FALLBACK_THEME = "atlas";
@@ -124,8 +116,10 @@ const baseStore = create<ThemeState>()((set, get) => ({
         // backend, a catalog that would not build — threw a SECOND time out of
         // the handler that existed to survive the first, rejecting the promise
         // no caller awaits. Failing to theme is not a reason to fail: the app
-        // stays on what `index.html` replayed from the launch cache, or on
-        // `tokens.css`'s Atlas-dark fallback on a first run.
+        // stays on what `index.html` replayed from the launch cache. On a
+        // first run there is no cache, and it stays on the package's
+        // `styles-core.css` floor instead: the Atlas theme at `:root`, dark
+        // unless the OS prefers light.
         const loaded =
           (await loadTheme(id)) ?? (id === FALLBACK_THEME ? null : await loadTheme(FALLBACK_THEME));
         // A newer `apply` started while this one was loading. It owns the

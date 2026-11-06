@@ -66,7 +66,7 @@ never runs the update check.
 
 **Signed in**, Atlas sends PostHog an `$identify` that switches the identity to your
 Atlas account id and carries `$anon_distinct_id` — the device id. PostHog **merges the
-device person into the account person**, which means events that device sent *before*
+device person into the account person**, which means events that device sent _before_
 you signed in are re-attributed to your account. That is retroactive, it is what
 "merge" means, and it is stated here rather than buried because the previous version
 of this document promised the opposite.
@@ -87,21 +87,21 @@ Two things still hold:
 
 Every event carries these, and nothing else implicitly:
 
-| Property | Value |
-| --- | --- |
-| `$lib` | `atlas-rust` (Rust emitter) or `atlas-js` (renderer crash reporter) |
-| `app_version` | Atlas version, e.g. `0.2.4` |
-| `os` | `macos`, `linux`, `windows` |
-| `arch` | `aarch64`, `x86_64` |
-| `$groups` | `{ organisation: <local org id> }` — whenever an Organization is active |
-| `atlas_org_id` | The same local Organization id, as a plain property |
+| Property         | Value                                                                   |
+| ---------------- | ----------------------------------------------------------------------- |
+| `$lib`           | `atlas-rust` (Rust emitter) or `atlas-js` (renderer crash reporter)     |
+| `app_version`    | Atlas version, e.g. `0.2.4`                                             |
+| `os`             | `macos`, `linux`, `windows`                                             |
+| `arch`           | `aarch64`, `x86_64`                                                     |
+| `$groups`        | `{ organisation: <local org id> }` — whenever an Organization is active |
+| `atlas_org_id`   | The same local Organization id, as a plain property                     |
 | `atlas_org_kind` | `cloud` (the org is synced) or `local` (it exists only on this machine) |
 
 **Organization scoping.** Every event is attributed to the Organization you are
 working in, so usage can be read per tenant rather than as one global stream.
 That includes **local-only orgs and events sent while signed out** — the active
 Organization is a local fact, not an account one. The id that travels is always
-the *local* id: a random UUID this install minted, meaningless to anyone else.
+the _local_ id: a random UUID this install minted, meaningless to anyone else.
 
 A **local** org's **name is never sent** — it is a string you typed into a box on
 your own machine. Only a synced org's name and your role in it are sent, and only
@@ -117,21 +117,21 @@ coarse geo-resolution. Atlas sends no other device, network, or locale informati
 
 ### Lifecycle
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `app_started` | Atlas launches | `is_first_launch` (bool), `device_id_source` (`random` / `adopted`) |
-| `rust_panic` | A Rust panic, sent synchronously from the panic hook | `location` (Atlas's own `file:line`), `message` (redacted of path / URL / email tokens, truncated to 160 chars) |
+| Event         | When                                                 | Properties                                                                                                      |
+| ------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `app_started` | Atlas launches                                       | `is_first_launch` (bool), `device_id_source` (`random` / `adopted`)                                             |
+| `rust_panic`  | A Rust panic, sent synchronously from the panic hook | `location` (Atlas's own `file:line`), `message` (redacted of path / URL / email tokens, truncated to 160 chars) |
 
 ### Account
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `$identify` | Sign-in, or when your account details change | `$anon_distinct_id` (device id, on the merge only), `$set` → `email`, `name`, `atlas_account`, `atlas_org_count`, `atlas_active_org_id`; `$set_once` → `atlas_device_id` |
-| `$groupidentify` | A **synced** Organization becomes active (switch, sign-in, or "Turn on sync") | `$group_type: organisation`, `$group_key` (local org id), `$group_set` → `name`, `role`, `kind`. Never sent for a local-only org — there is nothing about it we are willing to describe. |
-| `auth_signed_in` | A device-authorization grant completes | `org_count`, `has_active_org` |
-| `auth_signed_out` | The user signs out from the account menu | `had_account` |
+| Event             | When                                                                          | Properties                                                                                                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$identify`       | Sign-in, or when your account details change                                  | `$anon_distinct_id` (device id, on the merge only), `$set` → `email`, `name`, `atlas_account`, `atlas_org_count`, `atlas_active_org_id`; `$set_once` → `atlas_device_id`                 |
+| `$groupidentify`  | A **synced** Organization becomes active (switch, sign-in, or "Turn on sync") | `$group_type: organisation`, `$group_key` (local org id), `$group_set` → `name`, `role`, `kind`. Never sent for a local-only org — there is nothing about it we are willing to describe. |
+| `auth_signed_in`  | A device-authorization grant completes                                        | `org_count`, `has_active_org`                                                                                                                                                            |
+| `auth_signed_out` | The user signs out from the account menu                                      | `had_account`                                                                                                                                                                            |
 
-`auth_signed_out` records the *user's* action only; a session the server ended (expiry
+`auth_signed_out` records the _user's_ action only; a session the server ended (expiry
 or revocation) emits nothing, because folding the two together would leave a count
 that means neither one thing nor the other.
 
@@ -141,10 +141,10 @@ relaunch. Switching directly from one account to another never carries
 
 ### Agents
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `agent_turn_started` | A turn begins | `agent_family`, `plugin_id`, `session_ref`, `turn_seq` |
-| `agent_turn_completed` | A turn ends, however it ends | see below |
+| Event                  | When                         | Properties                                             |
+| ---------------------- | ---------------------------- | ------------------------------------------------------ |
+| `agent_turn_started`   | A turn begins                | `agent_family`, `plugin_id`, `session_ref`, `turn_seq` |
+| `agent_turn_completed` | A turn ends, however it ends | see below                                              |
 
 `agent_family` is `acp` or `native`; `plugin_id` is the real agent (`claude-code-ts`,
 `codex`, `atlas-agent`). `session_ref` is a salted, non-reversible 16-character digest that
@@ -176,15 +176,30 @@ argument, no tool output, no project or repository, no diff.
 
 ### Other product events
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `model_chat_sent` | A direct model chat completes | `provider`, `model`, `input_tokens`, `output_tokens` |
-| `code_review_completed` | An AI code review finishes | `provider`, `model` |
+| Event                   | When                          | Properties                                           |
+| ----------------------- | ----------------------------- | ---------------------------------------------------- |
+| `model_chat_sent`       | A direct model chat completes | `provider`, `model`, `input_tokens`, `output_tokens` |
+| `code_review_completed` | An AI code review finishes    | `provider`, `model`                                  |
+
+### Onboarding
+
+| Event                   | When                                                                                                  | Properties                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `first_run_completed`   | First run's keymap question is answered (Escape included)                                             | `keymap` (the editor preset chosen, `atlas`, or `later` when put off) |
+| `tip_shown`             | A Tip appears                                                                                         | `tip_id`                                                              |
+| `tip_done`              | A Tip is closed from its own button, or the star prompt's Star on GitHub is pressed                   | `tip_id`                                                              |
+| `tip_dismissed`         | A Tip or the star prompt is closed any other way (Escape, a click outside, Dismiss, the close button) | `tip_id`                                                              |
+| `get_started_item_done` | A Get started step happens for the first time                                                         | `item` (`add-project`, `run-session`, `checkpoint`)                   |
+| `get_started_dismissed` | Get started is closed                                                                                 | `items_done` (how many of its steps were done)                        |
+
+The ids are Atlas's own names for its tips and steps, fixed in the app. Nothing you typed,
+and nothing about the project, rides along: `run-session` says a message was sent, never
+what it said, and `checkpoint` says a commit was linked, never which one.
 
 ### Feedback
 
-| Event | When | Properties |
-| --- | --- | --- |
+| Event                | When                                 | Properties                                                                                                                                                                                                                                     |
+| -------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `feedback_submitted` | You press Send in the feedback panel | `category`, `message` (verbatim), `has_screenshot`, `screenshot_bytes`, `screenshot_b64` (downscaled), `anonymous`, `account_id` / `account_email` / `active_org_id` (signed in and not anonymous), `telemetry_opt_in`, `source`, `active_tab` |
 
 Feedback is the one thing here that is **not** redacted — your message is sent exactly
@@ -196,10 +211,10 @@ See [The two things that are not consent-gated](#the-two-things-that-are-not-con
 
 ### Consent itself
 
-| Event | When | Properties |
-| --- | --- | --- |
-| `telemetry_opt_in` | The toggle is switched on | *none* |
-| `telemetry_opt_out` | The toggle is switched off | *none* |
+| Event               | When                       | Properties |
+| ------------------- | -------------------------- | ---------- |
+| `telemetry_opt_in`  | The toggle is switched on  | _none_     |
+| `telemetry_opt_out` | The toggle is switched off | _none_     |
 
 `telemetry_opt_out` is sent while telemetry is still enabled, so nothing is
 transmitted after the moment you opted out.
@@ -210,8 +225,8 @@ transmitted after the moment you opted out.
 events, and session recording are all explicitly disabled — the renderer captures no
 usage events of any kind.
 
-| Event | When | Properties |
-| --- | --- | --- |
+| Event        | When                                                                            | Properties                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `$exception` | A React render error, uncaught `window.onerror`, or unhandled promise rejection | The error message and stack, plus `type` (`react_error_boundary` / `uncaught_error` / `unhandled_rejection`), `source`, and a truncated `component_stack` |
 
 A short list of known-benign, non-actionable errors is dropped before it reaches
@@ -227,7 +242,7 @@ None of the following leaves your machine as telemetry, with or without consent:
 - **Prompts and responses.** No message you write to an agent, and nothing it writes back.
 - **Code.** No file contents, no diffs, no patches, no repository names or remotes.
 - **Paths.** No absolute or relative file paths, no project or directory names, no file
-  names. Turn analytics count *distinct files* using salted in-memory digests that are
+  names. Turn analytics count _distinct files_ using salted in-memory digests that are
   never transmitted, and report the file **extension** only (`rs`, `ts`) — never the
   name, the stem, or the directory. A dotfile like `.env` reports no extension at all.
   Free-text fields (`message`, `error_summary`) run through a redactor that strips

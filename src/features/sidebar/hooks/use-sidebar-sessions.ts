@@ -252,3 +252,43 @@ export function useSidebarSessions(): SidebarSessions {
     error: error ? (error instanceof Error ? error.message : String(error)) : null,
   };
 }
+
+/**
+ * One project's sessions, as the sidebar would list them scoped to it — for
+ * the title bar's session switcher (`session-switcher.tsx`). Reads the
+ * sidebar's own history query (same key, so the same cache and the same
+ * refreshes) and partitions it; the sidebar's side work (the pull request
+ * sweep, the outside-session sync) stays with the sidebar.
+ */
+export function useProjectSessions(projectId: string | null): {
+  partition: SidebarPartition;
+  isLoading: boolean;
+} {
+  const orgProjects = useActiveOrgProjects();
+  const projects = useMemo<SidebarProject[]>(
+    () => orgProjects.map((p) => ({ id: p.id, name: p.name, path: p.path })),
+    [orgProjects],
+  );
+  const sidebarSort = useSettingsStore((s) => s.settings.sidebarSort);
+  const { data: groups, isLoading } = useQuery({
+    queryKey: [...THREAD_PROJECTS_KEY, "all"],
+    queryFn: () => threadProjects(""),
+    staleTime: 30_000,
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+  const partition = useMemo(
+    () =>
+      groups && projectId
+        ? partitionSidebarSessions({
+            groups,
+            projects,
+            scopeProjectId: projectId,
+            now: Date.now(),
+            sort: sidebarSort,
+          })
+        : EMPTY_PARTITION,
+    [groups, projects, projectId, sidebarSort],
+  );
+  return { partition, isLoading };
+}

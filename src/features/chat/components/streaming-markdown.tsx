@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState, useMemo } from "react";
 import {
   CachedMarkdown,
+  type CachedMarkdownProps,
   parseTransientOffThread,
   transientWorkerAvailable,
 } from "@/lib/markdown-cache";
@@ -54,12 +55,10 @@ const TRANSIENT_THROTTLE_MS = 120;
 const TransientMarkdown = memo(function TransientMarkdown({
   source,
   className,
-  unstyled,
   fileRoot,
 }: {
   source: string;
   className?: string;
-  unstyled?: boolean;
   fileRoot?: string;
 }) {
   const small = source.length <= INLINE_PARSE_LIMIT;
@@ -152,12 +151,7 @@ const TransientMarkdown = memo(function TransientMarkdown({
   return (
     <div
       ref={ref}
-      className={cn(
-        unstyled
-          ? "select-text"
-          : "prose-chat text-[var(--foreground)] leading-relaxed break-words select-text",
-        className,
-      )}
+      className={cn("prose-session select-text", className)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );
@@ -168,24 +162,25 @@ const MarkdownBlock = memo(function MarkdownBlock({
   source,
   trailing,
   className,
-  unstyled,
+  codeActions,
   priority,
   fileRoot,
 }: {
   source: string;
   trailing: boolean;
   className?: string;
-  unstyled?: boolean;
+  codeActions?: CachedMarkdownProps["codeActions"];
   priority?: number;
   fileRoot?: string;
 }) {
   // A still-open code fence renders as plain text (no per-frame re-highlight of a
   // growing block); it snaps to highlighted once the closing fence streams in.
+  // Its root is the prose root (the size and colour the transcript reads at).
   if (trailing && isIncompleteCodeFence(source)) {
     return (
       <pre
         className={cn(
-          "whitespace-pre-wrap break-words font-mono text-base leading-relaxed text-[var(--foreground)] select-text",
+          "prose-session font-mono break-words whitespace-pre-wrap select-text",
           className,
         )}
       >
@@ -199,7 +194,6 @@ const MarkdownBlock = memo(function MarkdownBlock({
     return (
       <TransientMarkdown
         source={source}
-        unstyled={unstyled}
         fileRoot={fileRoot}
         className={cn("[display:contents]", className)}
       />
@@ -208,7 +202,7 @@ const MarkdownBlock = memo(function MarkdownBlock({
   return (
     <CachedMarkdown
       source={source}
-      unstyled={unstyled}
+      codeActions={codeActions}
       priority={priority}
       fileRoot={fileRoot}
       className={cn("[display:contents]", className)}
@@ -281,15 +275,16 @@ export function StreamingMarkdown({
   source,
   streaming,
   className,
-  unstyled,
+  codeActions,
   priority,
   fileRoot,
 }: {
   source: string;
   streaming: boolean;
   className?: string;
-  /** See `CachedMarkdown.unstyled` — the new transcript pins its own metrics. */
-  unstyled?: boolean;
+  /** See `CachedMarkdown.codeActions`; settled blocks only (an open fence
+   *  and the live tail never get them). */
+  codeActions?: CachedMarkdownProps["codeActions"];
   /** See `CachedMarkdown.priority`. */
   priority?: number;
   /** See `CachedMarkdown.fileRoot`. */
@@ -308,7 +303,7 @@ export function StreamingMarkdown({
     return (
       <CachedMarkdown
         source={source}
-        unstyled={unstyled}
+        codeActions={codeActions}
         priority={priority}
         fileRoot={fileRoot}
         className={className}
@@ -320,14 +315,14 @@ export function StreamingMarkdown({
   const trailingIsFence = streaming && lastIdx >= 0 && isIncompleteCodeFence(blocks[lastIdx]);
 
   return (
-    <div className={className}>
+    <div className={cn("prose-session", className)}>
       {blocks.map((blk, i) => (
         <MarkdownBlock
           key={i}
           source={blk}
           trailing={streaming && i === lastIdx}
           className={className}
-          unstyled={unstyled}
+          codeActions={codeActions}
           priority={priority}
           fileRoot={fileRoot}
         />

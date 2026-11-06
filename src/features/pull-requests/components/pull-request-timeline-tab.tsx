@@ -32,9 +32,6 @@ import {
 import { openPullRequest } from "@/features/git/lib/git-pr-api";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { IconButton } from "@/ui/icon-button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 import { classifyPrError } from "../lib/pr-errors";
 import { latestReviewOutcomes, reviewOutcome, type ReviewOutcome } from "../lib/pull-request-logic";
@@ -68,6 +65,7 @@ import {
 } from "./pull-request-presentation";
 import { ReactionBar } from "./pull-request-reactions";
 import { ActivityUnavailableState } from "./pull-request-states";
+import { Button, IconButton, Tooltip, TooltipContent, TooltipTrigger } from "@tryatlas/design";
 
 /** Offscreen rows skip rendering; this is the height each is assumed to
  *  have until it is first laid out. */

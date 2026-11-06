@@ -17,16 +17,6 @@ import {
 import { openPullRequest } from "@/features/git/lib/git-pr-api";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/ui/tooltip";
 
 import { classifyPrError } from "../lib/pr-errors";
 import {
@@ -78,10 +68,28 @@ import { ReactionBar } from "./pull-request-reactions";
 import { ActivityUnavailableState, ConversationGhost } from "./pull-request-states";
 import { PullRequestCommentActions } from "./pull-request-comment-actions";
 import { CheckLogButton } from "./pull-request-check-log";
+import {
+  AddressAllFeedbackButton,
+  AddressWithAgentButton,
+  FixCheckWithAgentButton,
+} from "./pull-request-ask-buttons";
 import { VerdictRing } from "./pull-request-triggers";
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@tryatlas/design";
 
 export const COMMENT_PAGE = 10;
 const CLAMP_PX = 240;
+const NO_THREADS: readonly PrReviewThread[] = [];
 
 // ── pieces ──────────────────────────────────────────────────────────────
 
@@ -403,6 +411,11 @@ export function PullRequestSummaryTab({
               <span>{reviewStateLabel(comment.reviewState)}</span>
             ) : null}
           </div>
+          {detail.state === "open" &&
+          finding &&
+          !(finding.kind === "thread" && finding.thread.isResolved) ? (
+            <AddressWithAgentButton feedback={finding} />
+          ) : null}
           {finding ? fixButton(finding) : null}
           <ReactionBar
             className="ml-auto justify-end"
@@ -617,6 +630,9 @@ export function PullRequestSummaryTab({
                     </span>
                   </button>
                   <CheckLogButton check={check} />
+                  {failing && detail.state === "open" ? (
+                    <FixCheckWithAgentButton check={check} />
+                  ) : null}
                   {failing ? fixButton({ kind: "check", check }) : null}
                 </div>
               );
@@ -641,6 +657,13 @@ export function PullRequestSummaryTab({
         title={`Comments (${activity?.commentCount ?? "…"})`}
         actions={
           <div className="flex shrink-0 items-center gap-1">
+            {detail.state === "open" ? (
+              <AddressAllFeedbackButton
+                threads={activity?.reviewThreads ?? NO_THREADS}
+                threadsTruncated={activity?.reviewThreadsTruncated ?? false}
+                checks={detail.checks}
+              />
+            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={<Button size="xs" variant="ghost" aria-label="Filter comments" />}

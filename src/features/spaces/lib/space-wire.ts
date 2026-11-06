@@ -10,6 +10,8 @@
  * in the same colour on both clients, and the colour is derived, never sent.
  */
 
+import { actorHue, type LabelTone } from "@tryatlas/design";
+
 // ---------------------------------------------------------------------------
 // Binary frames: [u8 type][u8 slot][payload]
 // ---------------------------------------------------------------------------
@@ -301,16 +303,17 @@ export function clampAwareness(state: SpaceAwarenessState): SpaceAwarenessState 
   return clamped;
 }
 
-/** Which node is outlined in whose colour. First claimant wins — any rule
- *  works as long as both clients pick the same one. */
-export function selectionColours(actors: ReadonlyMap<string, SpaceActor>): Map<string, string> {
-  const colours = new Map<string, string>();
+/** Which node is outlined in whose identity hue (`actorHue`: the wire colour
+ *  is a key into the theme's hues, never painted). First claimant wins — any
+ *  rule works as long as both clients pick the same one. */
+export function selectionHues(actors: ReadonlyMap<string, SpaceActor>): Map<string, LabelTone> {
+  const hues = new Map<string, LabelTone>();
   for (const actor of actors.values()) {
     for (const nodeId of actor.selection) {
-      if (!colours.has(nodeId)) colours.set(nodeId, actor.colour);
+      if (!hues.has(nodeId)) hues.set(nodeId, actorHue(actor));
     }
   }
-  return colours;
+  return hues;
 }
 
 /** Frame this client's own state for a slot. */

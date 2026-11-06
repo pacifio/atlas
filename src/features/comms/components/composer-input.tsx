@@ -62,6 +62,9 @@ interface ComposerInputProps {
   /** Text over the large-paste limit. Return true to take it as an
    *  attachment. */
   onPasteLargeText?: (text: string) => boolean;
+  /** Files the native clipboard held that the paste event could not carry
+   *  (Linux), as absolute paths. */
+  onPastePaths?: (paths: string[]) => void;
   handle: React.RefObject<ComposerInputHandle | null>;
 }
 
@@ -74,6 +77,7 @@ export function ComposerInput({
   onKeyDown,
   onPaste,
   onPasteLargeText,
+  onPastePaths,
   handle,
 }: ComposerInputProps) {
   const inner = useRef<ComposerEditorHandle>(null);
@@ -81,16 +85,17 @@ export function ComposerInput({
   // The parent re-renders on every keystroke (the draft lives in its store)
   // and hands down fresh callbacks each time. The editor gets stable ones
   // that call the latest, so those re-renders stop at this component.
-  const latest = useRef({ onChange, onKeyDown, onPaste, onPasteLargeText });
+  const latest = useRef({ onChange, onKeyDown, onPaste, onPasteLargeText, onPastePaths });
   // After commit, never during render (see `ComposerEditor`'s `live`).
   useLayoutEffect(() => {
     membersRef.current = members;
-    latest.current = { onChange, onKeyDown, onPaste, onPasteLargeText };
+    latest.current = { onChange, onKeyDown, onPaste, onPasteLargeText, onPastePaths };
   });
   const [stable] = useState(() => ({
     onKeyDown: (e: KeyboardEvent) => latest.current.onKeyDown(e),
     onPaste: (e: ClipboardEvent) => latest.current.onPaste(e),
     onPasteLargeText: (text: string) => latest.current.onPasteLargeText?.(text) ?? false,
+    onPastePaths: (paths: string[]) => latest.current.onPastePaths?.(paths),
   }));
   const [initialValue] = useState(value);
 
@@ -184,6 +189,7 @@ export function ComposerInput({
         onKeyDown={stable.onKeyDown}
         onPaste={stable.onPaste}
         onPasteLargeText={stable.onPasteLargeText}
+        onPastePaths={stable.onPastePaths}
       />
     </CommsDirectoryContext.Provider>
   );

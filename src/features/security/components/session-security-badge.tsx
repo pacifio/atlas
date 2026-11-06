@@ -1,9 +1,9 @@
 import { ShieldAlert } from "lucide-react";
-import { Badge } from "@/ui/badge";
 import { badgeVariant, levelLabel, shouldShowBadge } from "../lib/security-levels";
 import { useProjectSecurity } from "../lib/use-project-security";
 import { useSecurityStore } from "../stores/security-store";
 import type { SecurityLevel } from "../types";
+import { Badge } from "@tryatlas/design";
 
 /** A security level as a status pill with a shield. */
 export function SecurityLevelBadge({ level, label }: { level: SecurityLevel; label?: string }) {

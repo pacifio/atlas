@@ -4,798 +4,44 @@
    Rust engine, which can never contain one. index.html needs no
    `@source`: its boot skeleton uses only its own inline `atlas-boot-*` rules. */
 @import "tailwindcss" source("../");
-@import "./tokens.css";
-@import "./diff-syntax.css";
-@import "./xyflow.css";
+/* The design system (`@tryatlas/design`, ADR-0027): Geist and Geist Mono, the
+   non-colour scales, the Tailwind bridge, the named utilities and xyflow's
+   chrome (`canvas.css`). The `-core`
+   sheet leaves out the package's built-in themes as resolved CSS blocks,
+   which desktop never selects: it applies themes through its own engine. In
+   their place it carries the Atlas theme alone at `:root` (dark unless the OS
+   prefers light) — the floor a first launch paints — and `applyTheme` writes
+   the active theme over it under `html:root` (or index.html's boot script
+   replays the last one from localStorage). Everything below is desktop's own. */
+@import "@tryatlas/design/styles-core.css";
+@import "./markdown.css";
+
+:root {
+  /* The one bar: every column's header (file tree, each split column, the
+     destination screen, the project rail's top band) is this tall, so together
+     they read as one strip broken only by the column borders. The macOS
+     traffic lights are centred in it via `trafficLightPosition` in
+     `src-tauri/tauri.conf.json`, whose `y` is NOT the buttons' top: the
+     titlebar container is made `16 + y` tall and the 16pt buttons sit 6pt
+     above its bottom, so their centre is `y + 2`pt down. Centring in this bar
+     means `y = 36 / 2 - 2 = 16`; change the height, change `y`. Those lights
+     ignore the interface zoom, so the bar divides it back out (`--ui-zoom`,
+     set by `applyUiScale`) and stays 36pt on screen at any zoom. (It was 40;
+     30 was tried and was too tight.) */
+  --titlebar-height: calc(36px / var(--ui-zoom, 1));
+  /* Windows and Linux caption buttons (minimize, maximize, close): the
+     Windows 11 caption button is 46px wide. */
+  --caption-button-width: 46px;
+}
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  /* shadcn's accent is a selected/hover surface. Atlas's former brand
-     "accent" has been renamed primary; do not collapse the two again. */
-  --color-accent: var(--accent);
-  --color-accent-hover: var(--atlas-element-hover);
-  --color-accent-muted: var(--muted);
-  --color-accent-secondary: var(--secondary);
-  --color-accent-foreground: var(--accent-foreground);
-  /* The hover face of `primary`, so a filled control can change on hover
-     without an opacity modifier (which Tailwind compiles to `color-mix`). */
-  --color-primary-hover: var(--atlas-primary-hover);
-  --color-primary-muted: var(--atlas-primary-muted);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-
-  /* The rest of the shadcn base tokens. Every theme sets all thirteen and the
-     resolver writes them, but without a `--color-*` entry here Tailwind has no
-     `bg-sidebar` or `text-chart-1` to generate — stock shadcn markup would have
-     rendered transparent the moment it landed. `chart-*` is also what the
-     recharts work in PR 2 reads. This block plus the one above is the complete
-     colour half of the base-token set; `radius`, the fonts, `tracking-normal`,
-     `spacing` and the shadows are non-colour and are mapped further down. */
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-
-  /* The roles shadcn has no name for. Each is named after the theme key it
-     resolves through, so the utility a component writes and the key a theme
-     author sets are the same word.
-
-     There used to be sixteen more here — `bg-base`, `bg-elevated`,
-     `text-primary`, `text-tertiary` and the rest — which were second names for
-     `background`, `card`, `foreground` and `muted-foreground`. Two names for
-     one pixel is what the 2026-09-17 audit opened with, and the sweep spent
-     them: those utilities are gone and their call sites write the shadcn name.
-     Do not reintroduce a synonym for a base token. */
-  --color-element-hover: var(--atlas-element-hover);
-  --color-element-active: var(--atlas-element-active);
-  --color-element-selected: var(--atlas-element-selected);
-  --color-panel: var(--atlas-panel-background);
-  --color-panel-input: var(--atlas-panel-input-background);
-  --color-disabled: var(--atlas-text-disabled);
-
-  --color-border-subtle: var(--atlas-border-subtle);
-  --color-border-strong: var(--atlas-border-strong);
-
-  --color-success: var(--atlas-status-success-foreground);
-  --color-warning: var(--atlas-status-warning-foreground);
-  --color-error: var(--atlas-status-error-foreground);
-  --color-info: var(--atlas-status-info-foreground);
-  /* The tinted fill behind a status foreground — what a Badge sits on. */
-  --color-success-muted: var(--atlas-status-success-background);
-  --color-warning-muted: var(--atlas-status-warning-background);
-  --color-error-muted: var(--atlas-status-error-background);
-  --color-info-muted: var(--atlas-status-info-background);
-  /* Between error and warning, for a severity scale that needs a step above
-     warning (the Security Agent's High). Derived, so every theme has it. */
-  --color-severe: color-mix(
-    in oklab,
-    var(--atlas-status-error-foreground) 50%,
-    var(--atlas-status-warning-foreground)
-  );
-  --color-severe-muted: color-mix(
-    in oklab,
-    var(--atlas-status-error-background) 50%,
-    var(--atlas-status-warning-background)
-  );
-
-  --font-sans: var(--font-sans);
-  --font-serif: var(--font-serif);
-  --font-mono: var(--font-mono);
   /* `font-terminal`: the terminal's own font while `terminalFontFamily` is
-     set, else the code font — the block terminal and xterm both read it. */
+     set, else the code font. xterm reads the same chain (`appliedTerminalFont`). */
   --font-terminal: var(--atlas-terminal-font, var(--font-mono));
-
-  /* Radius (decision 26). Theme authors own `--radius`; the four steps derive
-     from it through `--radius-base`, so `rounded-*` moves with the theme rather
-     than being baked in. `inline` is what keeps the `calc()` in the utility
-     instead of resolving it once at build time. tokens.css has the scale, when
-     to use which, and why `--radius-base` exists at all. */
-  --radius-sm: calc(var(--radius-base) - 4px);
-  --radius-md: calc(var(--radius-base) - 2px);
-  --radius-lg: var(--radius-base);
-  --radius-xl: calc(var(--radius-base) + 4px);
-  --radius-full: 9999px;
-
-  /* Elevation (decision 27). Tailwind rewrites a `--shadow-*` value at build
-     time to thread `--tw-shadow-color` through it, so the only way a
-     theme-supplied shadow reaches `shadow-md` is to point the namespace at a
-     variable OUTSIDE it — hence `--elevation-*` in tokens.css. `xl` and `2xl`
-     are pointed at the dialog level too: left alone they render Tailwind's
-     10%-black default, which is invisible on Atlas's near-black chrome (the
-     bug the audit found on 47 existing call sites). */
-  --shadow-sm: var(--elevation-raised);
-  --shadow-md: var(--elevation-menu);
-  --shadow-lg: var(--elevation-dialog);
-  --shadow-xl: var(--elevation-dialog);
-  --shadow-2xl: var(--elevation-dialog);
-  --inset-shadow-highlight: var(--inset-highlight);
-
-  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
-  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
-  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
-
-  --animate-fade-in: fade-in 0.15s var(--ease-out-strong);
-  --animate-fade-out: fade-out 0.12s var(--ease-out-strong);
-  --animate-scale-in: scale-in 0.15s var(--ease-out-strong);
-  /* A card growing out of the button that opened it (the session Details
-     popover): a smaller step than `scale-in`, since the card is large and a
-     5% scale on it reads as a zoom, not a grow. */
-  --animate-card-in: card-in 0.15s var(--ease-out-strong);
-  --animate-scale-out: scale-out 0.12s var(--ease-out-strong);
-  --animate-slide-in-right: slide-in-right 0.18s var(--ease-drawer);
-  /* The closed sidebar's peek (`SidebarPeek`). */
-  --animate-slide-in-left: slide-in-left 0.18s var(--ease-drawer);
-
-  /* Animated icon glyphs (`src/ui/animated-icon.tsx`, decision 33). Only the
-     one-shot, click-driven ones need a keyframe: everything hover-driven is a
-     plain `transition-*` at `duration-fast` and is already composited.
-
-     `icon-check-draw` is the single non-composited animation in this file's
-     motion set — `stroke-dashoffset` paints rather than composites. It is one
-     23-unit path inside a 14px glyph, so the paint is free; the alternative
-     (no draw-on) loses the only affordance that says "the copy landed". The
-     path carries `pathLength="1"`, so the offset is in normalised units and
-     the keyframe never has to know the glyph's real path length. */
-  --animate-icon-check-draw: icon-check-draw 0.22s var(--ease-out-strong) forwards;
-  --animate-icon-send: icon-send 0.6s var(--ease-in-out-strong);
-  --animate-icon-bell-ring: icon-bell-ring 0.55s var(--ease-in-out-strong);
-
-  @keyframes icon-check-draw {
-    from {
-      stroke-dashoffset: 1;
-    }
-    to {
-      stroke-dashoffset: 0;
-    }
-  }
-  /* Send: shrink, fly out right, cut back in from the left, settle. The cut is
-     the 46%→47% pair at opacity 0 — a jump the eye cannot see, which is what
-     lets one keyframe read as "the message left and the next one is ready"
-     without a second element or a JS sequence. */
-  @keyframes icon-send {
-    0% {
-      transform: translateX(0) scale(1);
-      opacity: 1;
-    }
-    18% {
-      transform: translateX(0) scale(0.8);
-      opacity: 1;
-    }
-    46% {
-      transform: translateX(160%) scale(0.8);
-      opacity: 0;
-    }
-    47% {
-      transform: translateX(-160%) scale(1);
-      opacity: 0;
-    }
-    100% {
-      transform: translateX(0) scale(1);
-      opacity: 1;
-    }
-  }
-  @keyframes icon-bell-ring {
-    0%,
-    100% {
-      transform: rotate(0deg);
-    }
-    12% {
-      transform: rotate(14deg);
-    }
-    30% {
-      transform: rotate(-11deg);
-    }
-    48% {
-      transform: rotate(8deg);
-    }
-    66% {
-      transform: rotate(-5deg);
-    }
-    84% {
-      transform: rotate(2deg);
-    }
-  }
-
-  @keyframes slide-in-right {
-    from {
-      transform: translateX(100%);
-    }
-    to {
-      transform: translateX(0);
-    }
-  }
-
-  @keyframes slide-in-left {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(0);
-    }
-  }
-
-  @keyframes fade-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-  @keyframes fade-out {
-    from {
-      opacity: 1;
-    }
-    to {
-      opacity: 0;
-    }
-  }
-  @keyframes scale-in {
-    from {
-      opacity: 0;
-      transform: scale(0.95);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-  @keyframes card-in {
-    from {
-      opacity: 0;
-      transform: scale(0.97);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-  @keyframes scale-out {
-    from {
-      opacity: 1;
-      transform: scale(1);
-    }
-    to {
-      opacity: 0;
-      transform: scale(0.95);
-    }
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   Type scale (decision 24) and the remaining non-colour scales.
-
-   NOT `inline`: these are literals, and emitting them as real custom
-   properties is what lets the named text styles below — and any hand-written
-   CSS — say `var(--text-2xs)` instead of repeating a number.
-
-   9 / 10 / 11 / 12 / 13 / 14 / 16 / 20 / 24. Half-pixel sizes round UP to the
-   next step: the audit found ~130 of them (9.5, 10.5, 11.5, 12.5) and they are
-   the reason `text-[…]` outnumbers the scale 20 to 1. Only two weights are
-   allowed anywhere: 500 (`font-medium`) and 600 (`font-semibold`).
-   ────────────────────────────────────────────────────────────────────────── */
-@theme {
-  --text-3xs: 9px;
-  --text-3xs--line-height: 12px;
-  --text-2xs: 10px;
-  --text-2xs--line-height: 14px;
-  --text-xs: 11px;
-  --text-xs--line-height: 15px;
-  --text-sm: 12px;
-  --text-sm--line-height: 16px;
-  --text-base: 13px;
-  --text-base--line-height: 18px;
-  --text-md: 14px;
-  --text-md--line-height: 20px;
-  --text-lg: 16px;
-  --text-lg--line-height: 22px;
-  --text-xl: 20px;
-  --text-xl--line-height: 26px;
-  --text-2xl: 24px;
-  --text-2xl--line-height: 30px;
-
-  /* One glass blur. `backdrop-blur-glass` replaces the 81 assorted
-     `backdrop-blur-xl` / `-2xl` sites during the sweep. */
-  --blur-glass: 24px;
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   Named text styles (decision 24).
-
-   Six, and they cover the panel chrome. Reach for one of these before reaching
-   for a size plus a weight plus a colour: `eyebrow` is the section header,
-   `label` the text on and beside a control, `body` running prose, `caption`
-   the dimmed line under something, `code` any monospace run, `heading` a panel
-   or dialog title.
-   ────────────────────────────────────────────────────────────────────────── */
-@utility eyebrow {
-  font-family: var(--font-sans);
-  font-size: var(--text-2xs);
-  line-height: var(--text-2xs--line-height);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-
-@utility label {
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  line-height: var(--text-xs--line-height);
-  font-weight: 500;
-  color: var(--foreground);
-}
-
-@utility body {
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: var(--text-base--line-height);
-  font-weight: 500;
-  color: var(--foreground);
-}
-
-@utility caption {
-  font-family: var(--font-sans);
-  font-size: var(--text-2xs);
-  line-height: var(--text-2xs--line-height);
-  font-weight: 500;
-  color: var(--muted-foreground);
-}
-
-@utility code {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: var(--text-sm--line-height);
-  font-weight: 500;
-  font-feature-settings: "zero", "ss02";
-}
-
-@utility heading {
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  line-height: var(--text-md--line-height);
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   Control heights (decision 25) and the two named layout constants.
-   Tailwind's `h-*` reads `--spacing` and `--container-*`, not a height scale,
-   so each step is its own utility rather than a theme namespace.
-   ────────────────────────────────────────────────────────────────────────── */
-@utility h-control-xs {
-  height: var(--control-xs);
-}
-@utility h-control-sm {
-  height: var(--control-sm);
-}
-@utility h-control-md {
-  height: var(--control-md);
-}
-@utility h-control-lg {
-  height: var(--control-lg);
-}
-/* The square an icon-only control occupies — one control height on both axes. */
-@utility size-control-xs {
-  width: var(--control-xs);
-  height: var(--control-xs);
-}
-@utility size-control-sm {
-  width: var(--control-sm);
-  height: var(--control-sm);
-}
-@utility size-control-md {
-  width: var(--control-md);
-  height: var(--control-md);
-}
-@utility size-control-lg {
-  width: var(--control-lg);
-  height: var(--control-lg);
 }
 
 @utility h-titlebar {
   height: var(--titlebar-height);
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   Z-index layers (decision 28). `z-<number>` only takes numbers, so the layers
-   are named utilities. Nothing outside this file should write a z-index.
-   ────────────────────────────────────────────────────────────────────────── */
-@utility z-panel {
-  z-index: var(--z-panel);
-}
-@utility z-titlebar {
-  z-index: var(--z-titlebar);
-}
-@utility z-drawer {
-  z-index: var(--z-drawer);
-}
-@utility z-overlay {
-  z-index: var(--z-overlay);
-}
-@utility z-modal {
-  z-index: var(--z-modal);
-}
-@utility z-popover {
-  z-index: var(--z-popover);
-}
-@utility z-toast {
-  z-index: var(--z-toast);
-}
-@utility z-tooltip {
-  z-index: var(--z-tooltip);
-}
-@utility z-drag {
-  z-index: var(--z-drag);
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   The scrim. Two rungs, and the colour is deliberately NOT a theme key.
-
-   A scrim's job is to push what is behind it away from the reader, and only
-   darkening does that: over a light theme a light scrim separates nothing, so
-   every light UI — macOS sheets, VS Code light, shadcn's own
-   `DialogOverlay`, which is a bare `bg-black/50` in both appearances — darkens
-   its scrim too. Making it a key would offer authors a choice that has one correct
-   answer, and the wrong answer would silently disable the dim. The alpha is
-   what carries appearance: 60% black reads as a heavy dim on cream and as a
-   deepening on near-black, which is the same instruction in both.
-
-   What WAS drift is that 29 sites wrote nine different alphas by hand. These
-   two are the whole vocabulary:
-
-     scrim       a dialog, a palette, a lightbox — the app is out of reach
-     scrim-soft  an in-panel drawer whose own surface carries the depth
-
-   `scrim` is also the right fill for a control that sits over arbitrary media
-   (a user's image, a PDF page), for the same reason: nothing about the theme
-   tells you what is underneath.
-   ────────────────────────────────────────────────────────────────────────── */
-/* The frosted HUD surface — the hint-nav keycaps and their dock, and the
-   sign-in dock. A translucent gradient over a heavy backdrop blur, a hairline
-   border, a raised top edge and a menu-rung shadow, so the thing reads as a
-   physical key floating over whatever the app is showing.
-
-   It was the same recipe written out three times in inline styles, pinned to a
-   near-black gradient and a white hairline: on a light theme that is a black
-   key in a cream room with an invisible edge. Both ends come off the theme's
-   own surfaces now, and the alpha is what keeps the blur visible. Compose the
-   blur and the fill with it —
-   `glass-hud backdrop-blur-glass bg-gradient-to-b from-popover/85 to-card/90`
-   — so a smaller chip can pick a lighter blur, and the alpha stays in the
-   markup where it is visibly the thing that lets the blur through. */
-@utility glass-hud {
-  border: 1px solid var(--border);
-  box-shadow: var(--inset-highlight), var(--elevation-menu);
-}
-
-/* A glass rim: the surface the app sits on (black on a dark theme, white on
-   a light one) inside a 1px edge that catches light at the top, eases off
-   through the sides and comes back at the bottom — never so far that the
-   lower edge fades out (it read as missing on the composer bar) — plus a
-   faint inner top highlight: the edge of a pane of glass, without a blur or a
-   tint. The
-   edge is a border-box gradient behind a padding-box fill, so it follows any
-   radius. Both come off `--foreground`, so the rim reads on every theme. */
-@utility glass-rim {
-  --glass-fill: var(--background);
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--glass-fill), var(--glass-fill)) padding-box,
-    linear-gradient(
-        to bottom,
-        color-mix(in srgb, var(--foreground) 26%, transparent),
-        color-mix(in srgb, var(--foreground) 13%, transparent) 50%,
-        color-mix(in srgb, var(--foreground) 20%, transparent)
-      )
-      border-box;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent);
-}
-
-/* The team chat composer's corner, and the agent composer's input card
-   while folded: half a one-line height (both are 46px), so a single
-   line is an exact capsule. In px, like the bar's own geometry — the bar is
-   44px + a 1px rim top and bottom, all literal px — because the `rounded-*`
-   scale is in rem and shrinks with the UI zoom, which left the ends short of
-   round. Past one line the corner stays 23px rather than growing into a
-   stadium that would clip the formatting row and attachment chips. */
-@utility rounded-composer {
-  border-radius: 23px;
-}
-
-/* A `glass-rim` that is a control: the fill lifts a step on hover, while
-   its menu is open, and while it is a toggle that is on. The rim's gradient paints over `background-color`, so the
-   usual `hover:bg-*` cannot reach the fill; this moves the fill itself. */
-@utility glass-rim-control {
-  &:hover:not(:disabled),
-  &[data-popup-open],
-  &[aria-pressed="true"] {
-    --glass-fill: color-mix(in srgb, var(--foreground) 7%, var(--background));
-  }
-}
-
-@utility scrim {
-  background-color: rgb(0 0 0 / 0.6);
-}
-@utility scrim-soft {
-  background-color: rgb(0 0 0 / 0.2);
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   Motion (decision 29). Tailwind's `duration-*` is numeric-only, same as
-   `z-*`. The easings are already a theme namespace, so `ease-out-strong`,
-   `ease-in-out-strong` and `ease-drawer` come for free — and are the only
-   three curves allowed.
-   ────────────────────────────────────────────────────────────────────────── */
-@utility duration-instant {
-  --tw-duration: var(--duration-instant);
-  transition-duration: var(--duration-instant);
-}
-@utility duration-fast {
-  --tw-duration: var(--duration-fast);
-  transition-duration: var(--duration-fast);
-}
-:root {
-  /* The morph: a round button that grows into a panel.
-   *
-   * Asymmetric on purpose. Opening overshoots — the box arrives slightly past
-   * its size and settles — because it is a thing being summoned and should
-   * feel like it has mass. Closing is a plain ease-out and quicker: dismissing
-   * is not an event, and an overshoot on the way out reads as a bounce nobody
-   * asked for.
-   *
-   * These are the Standards values, so a surface ported from the web moves the
-   * way its original does. */
-  /* The trigger's size, and so the closed box's. A caller can override it
-     per morph; everything here is built for this one. */
-  --morph-closed: 2rem;
-  --morph-open-dur: 350ms;
-  --morph-close-dur: 250ms;
-  --morph-ease: cubic-bezier(0.34, 1.25, 0.64, 1);
-  --morph-close-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --morph-r-closed: 1rem;
-  --morph-r-open: 1.5rem;
-  --morph-fade-dur: 200ms;
-  --morph-slide: 2.5rem;
-  --morph-rotate: 45deg;
-  --morph-scale: 0.97;
-  --morph-blur: 2px;
-}
-
-/* A round trigger that grows into a panel, and the glyph and the panel
- * trading places as it does.
- *
- * CSS, not `motion`: the whole animation is three properties on one box
- * (`width`, `height`, `border-radius`) with `overflow: hidden` clipping the
- * contents throughout, which is what makes it read as ONE object changing
- * shape rather than a panel appearing over a button. A layout animation would
- * need the two to be separate elements to tween between, which is the thing
- * this is avoiding.
- *
- * The caller sets `--morph-open-w` / `--morph-open-h`, and `data-open` drives
- * the whole thing. `data-anchor="start"` pins the glyph to the bottom-LEFT
- * corner so the box grows up and to the right; every slide direction and both
- * transform origins flip with it.
- */
-.t-morph {
-  position: relative;
-  width: var(--morph-closed, 2rem);
-  height: var(--morph-closed, 2rem);
-  border-radius: var(--morph-r-closed);
-  overflow: hidden;
-  transition:
-    width var(--morph-close-dur) var(--morph-close-ease),
-    height var(--morph-close-dur) var(--morph-close-ease),
-    border-radius var(--morph-close-dur) var(--morph-close-ease);
-}
-.t-morph[data-open="true"] {
-  width: var(--morph-open-w);
-  height: var(--morph-open-h);
-  border-radius: var(--morph-r-open);
-  transition:
-    width var(--morph-open-dur) var(--morph-ease),
-    height var(--morph-open-dur) var(--morph-ease),
-    border-radius var(--morph-open-dur) var(--morph-ease);
-}
-
-/* The panel's own fill, faded in as the box grows so the round button does
- * not flash at the panel's colour halfway through. */
-.t-morph-surface {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  transition: opacity var(--morph-fade-dur) var(--morph-close-ease);
-}
-.t-morph[data-open="true"] .t-morph-surface {
-  opacity: 1;
-}
-
-.t-morph-trigger {
-  position: absolute;
-  inset: auto 0 0 auto;
-  width: var(--morph-closed, 2rem);
-  height: var(--morph-closed, 2rem);
-  transition:
-    opacity var(--morph-fade-dur) var(--morph-close-ease),
-    transform var(--morph-open-dur) var(--morph-close-ease),
-    filter var(--morph-fade-dur) var(--morph-close-ease);
-}
-.t-morph-trigger svg {
-  transition: transform var(--morph-open-dur) var(--morph-close-ease);
-}
-.t-morph[data-open="true"] .t-morph-trigger {
-  opacity: 0;
-  transform: translateX(calc(-1 * var(--morph-slide)));
-  filter: blur(var(--morph-blur));
-  pointer-events: none;
-}
-.t-morph[data-open="true"] .t-morph-trigger svg {
-  transform: scale(var(--morph-scale)) rotate(var(--morph-rotate));
-}
-
-.t-morph-menu {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  transform: translateX(var(--morph-slide)) scale(var(--morph-scale));
-  transform-origin: bottom right;
-  filter: blur(var(--morph-blur));
-  pointer-events: none;
-  transition:
-    opacity var(--morph-fade-dur) var(--morph-close-ease),
-    transform var(--morph-open-dur) var(--morph-close-ease),
-    filter var(--morph-fade-dur) var(--morph-close-ease);
-}
-.t-morph[data-open="true"] .t-morph-menu {
-  opacity: 1;
-  transform: translateX(0) scale(1);
-  filter: blur(0);
-  pointer-events: auto;
-}
-
-/* Anchored at the bottom-LEFT: the glyph pins to that corner and the box
-   grows up and right, so every slide runs the other way. */
-.t-morph[data-anchor="start"] .t-morph-trigger {
-  inset: auto auto 0 0;
-}
-.t-morph[data-anchor="start"][data-open="true"] .t-morph-trigger {
-  transform: translateX(var(--morph-slide));
-}
-.t-morph[data-anchor="start"][data-open="true"] .t-morph-trigger svg {
-  transform: scale(var(--morph-scale)) rotate(calc(-1 * var(--morph-rotate)));
-}
-.t-morph[data-anchor="start"] .t-morph-menu {
-  transform: translateX(calc(-1 * var(--morph-slide))) scale(var(--morph-scale));
-  transform-origin: bottom left;
-}
-.t-morph[data-anchor="start"][data-open="true"] .t-morph-menu {
-  transform: translateX(0) scale(1);
-}
-
-/* `data-anchor="end"` spelled out, for a morph whose trigger names the start
-   corner in its own classes (share): the triggers carry 1px offsets for the
-   box's border, and these full `inset`s outrank them. */
-.t-morph[data-anchor="end"] .t-morph-trigger {
-  inset: auto -1px -1px auto;
-}
-
-/* Top anchor: the closed button sits on the box's TOP edge, so a box pinned by
-   its top grows downward — a morph opened from the top of a rail rather than
-   out of a footer. */
-.t-morph[data-anchor-y="top"] .t-morph-trigger {
-  inset: -1px -1px auto auto;
-}
-.t-morph[data-anchor-y="top"][data-anchor="start"] .t-morph-trigger {
-  inset: -1px auto auto -1px;
-}
-.t-morph[data-anchor-y="top"] .t-morph-menu {
-  transform-origin: top right;
-}
-.t-morph[data-anchor-y="top"][data-anchor="start"] .t-morph-menu {
-  transform-origin: top left;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .t-morph,
-  .t-morph-surface,
-  .t-morph-trigger,
-  .t-morph-trigger svg,
-  .t-morph-menu {
-    transition: none !important;
-  }
-}
-
-@utility duration-base {
-  --tw-duration: var(--duration-base);
-  transition-duration: var(--duration-base);
-}
-@utility duration-slow {
-  --tw-duration: var(--duration-slow);
-  transition-duration: var(--duration-slow);
-}
-
-/* The 1px top highlight on raised glass — 17 inline copies in the audit.
-   Delegates to Tailwind's own inset-shadow utility, so `inset-highlight
-   shadow-md` composes instead of one overwriting the other's box-shadow. */
-@utility inset-highlight {
-  @apply inset-shadow-highlight;
-}
-
-/* The one disabled treatment (decision 31), for elements that cannot carry
-   `:disabled` (a div acting as a control). Form controls use the pair
-   `disabled:opacity-50 disabled:cursor-not-allowed` — which is what every
-   `src/ui` primitive does. */
-@utility disabled-look {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Opt out of the global focus ring below, for a control that draws its own. */
-@utility focus-ring-none {
-  &:focus-visible {
-    outline: none;
-  }
-}
-
-/* Bare `rounded` = `rounded-sm` (decision 26). Tailwind v4 reads bare `rounded`
-   from the `--radius` theme key, whose stock value is a static 0.25rem no theme
-   can reach, so the key is restated here. Not a hand-written `.rounded` rule:
-   one placed after the generated utilities beat every other `rounded-*` on the
-   same element, so `rounded rounded-l-none` kept its left corners. This way
-   Tailwind sorts `.rounded` ahead of the side and corner variants as usual.
-   `reference` keeps the key out of `:root` — it would overwrite the theme's own
-   `--radius`, which the whole scale derives from — and `inline` writes the
-   value into the utility, since there is no variable left to point at. */
-@theme inline reference {
-  --radius: var(--radius-sm);
-}
-
-/* ──────────────────────────────────────────────────────────────────────────
-   Focus and disabled (decision 31).
-
-   Atlas used to remove the outline everywhere, which left it with no keyboard
-   focus indicator at all. `:focus` stays bare — a mouse click should not draw
-   a ring, and on `role="tab"` / `tabIndex=0` hosts a sticky `:focus` outline
-   reads as a stuck selection. `:focus-visible` is the keyboard case, and it
-   gets one ring: 2px of `--ring`, which every theme sets to its accent.
-
-   A control that draws its own indicator opts out with `focus-ring-none`, or
-   with Tailwind's `focus-visible:outline-none`. Both live in the utilities
-   layer, which is why these two rules have to sit in `@layer base` — an
-   unlayered rule would outrank every utility no matter its specificity.
-   ────────────────────────────────────────────────────────────────────────── */
-@layer base {
-  :focus {
-    outline: none;
-  }
-
-  :focus-visible {
-    outline: 2px solid var(--ring);
-    outline-offset: 1px;
-  }
 }
 
 /* ── Composer — the shared Tiptap core (`components/composer/`) ────────────
@@ -819,7 +65,7 @@
   margin: 0;
 }
 .atlas-composer .ProseMirror ::selection {
-  background: var(--atlas-selection-background);
+  background: var(--selection-background);
 }
 .atlas-composer-placeholder {
   position: absolute;
@@ -892,7 +138,7 @@
   top: 8px;
   left: 10px;
   right: 38px;
-  color: var(--atlas-text-disabled);
+  color: var(--text-disabled);
 }
 
 .atlas-mention-chip {
@@ -954,16 +200,16 @@
   color: var(--primary);
 }
 .atlas-mention-chip[data-mention-kind="symbol"] {
-  color: var(--atlas-status-success-foreground);
+  color: var(--status-success-foreground);
 }
 .atlas-mention-chip[data-mention-kind="knowledge"] {
   color: var(--primary);
 }
 .atlas-mention-chip[data-mention-kind="repo"] {
-  color: var(--atlas-status-success-foreground);
+  color: var(--status-success-foreground);
 }
 .atlas-mention-chip[data-mention-kind="paper"] {
-  color: var(--atlas-status-warning-foreground);
+  color: var(--status-warning-foreground);
 }
 .atlas-mention-chip[data-mention-kind="branch"] {
   color: var(--secondary-foreground);
@@ -981,10 +227,10 @@
   color: var(--primary);
 }
 .atlas-mention-chip[data-mention-kind="recorded_session"] {
-  color: var(--atlas-status-success-foreground);
+  color: var(--status-success-foreground);
 }
 .atlas-mention-chip[data-mention-kind="comment"] {
-  color: var(--atlas-status-warning-foreground);
+  color: var(--status-warning-foreground);
 }
 
 /* Hover preview card for media (`@file` image/video) mention chips. Portalled
@@ -1109,8 +355,6 @@
 .atlas-md-block {
   margin: 0.75rem 0;
 }
-.prose-chat .atlas-md-block > table,
-.prose-chat .atlas-md-block > pre,
 .atlas-md-block > table,
 .atlas-md-block > pre {
   margin: 0;
@@ -1213,14 +457,6 @@
 }
 
 @layer base {
-  *,
-  ::after,
-  ::before,
-  ::backdrop,
-  ::file-selector-button {
-    border-color: var(--border, currentColor);
-  }
-
   * {
     margin: 0;
     padding: 0;
@@ -1234,7 +470,7 @@
     width: 100%;
     overflow: hidden;
     /* `--font-sans`: the `uiFontFamily` setting, else the theme's font, else
-       the system font (the display-settings block at the end of this file). */
+       Geist (the display-settings block at the end of this file). */
     font-family: var(--font-sans);
     font-size: 13px;
     line-height: 1.45;
@@ -1355,7 +591,7 @@
      hidden (still mounted) chat, whose glow must not restyle the bar. */
   [data-session-column]:has(.atlas-welcome-glow:not([data-atlas-offstage] *)) > [data-pane-header] {
     --muted-foreground: color-mix(in oklab, var(--foreground) 62%, transparent);
-    --atlas-text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
+    --text-disabled: color-mix(in oklab, var(--foreground) 40%, transparent);
   }
   :is(.atlas-welcome-glow, .atlas-welcome-swatch)[data-palette="ember"] {
     --welcome-hue: #a3281c;
@@ -1414,24 +650,15 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--atlas-scrollbar-thumb-background);
+    background: var(--scrollbar-thumb-background);
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--atlas-scrollbar-thumb-hover);
+    background: var(--scrollbar-thumb-hover);
   }
 
   ::selection {
-    background: var(--atlas-selection-background);
-    color: var(--foreground);
-  }
-
-  /* The terminal renders command output/input on AMOLED black where the 6%
-     app-wide selection is nearly invisible. Scope a clearly-visible selection
-     to the block terminal (React blocks + command input), matching the xterm
-     surface's translucent-blue selection. */
-  [data-block-terminal] ::selection {
-    background: rgba(97, 175, 239, 0.35);
+    background: var(--selection-background);
     color: var(--foreground);
   }
 
@@ -1491,8 +718,8 @@
      succeeds. Every fallback hex mirrors the `atlas` theme in
      `features/editor/themes/themes.ts` — keep the two in step. */
   .cm-editor {
-    background-color: var(--atlas-editor-background, #000);
-    color: var(--atlas-editor-foreground, #d4d4d4);
+    background-color: var(--editor-background, #000);
+    color: var(--editor-foreground, #d4d4d4);
     /* `font-size` + `line-height` live on the editor so both .cm-content
        and .cm-gutters measure the SAME row height — CodeMirror reads the
        computed line-height off the content via ResizeObserver to position
@@ -1506,34 +733,34 @@
     line-height: calc(var(--atlas-editor-font-size, 13px) * 20 / 13);
   }
   .cm-content {
-    color: var(--atlas-editor-foreground, #d4d4d4);
-    caret-color: var(--atlas-editor-caret, #d4d4d4);
+    color: var(--editor-foreground, #d4d4d4);
+    caret-color: var(--editor-caret, #d4d4d4);
   }
   .cm-gutters {
-    background-color: var(--atlas-editor-gutter-background, #000);
-    color: var(--atlas-editor-gutter-foreground, #666);
+    background-color: var(--editor-gutter-background, #000);
+    color: var(--editor-gutter-foreground, #666);
     border: none;
   }
   .cm-activeLineGutter {
-    color: var(--atlas-editor-active-line-gutter-foreground, #d4d4d4);
+    color: var(--editor-active-line-gutter-foreground, #d4d4d4);
     background-color: transparent;
   }
   .cm-activeLine {
-    background-color: var(--atlas-editor-active-line-background, rgba(255, 255, 255, 0.04));
+    background-color: var(--editor-active-line-background, rgba(255, 255, 255, 0.04));
   }
   .cm-selectionBackground,
   .cm-focused .cm-selectionBackground,
   .cm-content ::selection {
-    background-color: var(--atlas-editor-selection-background, #303030) !important;
+    background-color: var(--editor-selection-background, #303030) !important;
   }
   .cm-cursor,
   .cm-dropCursor {
-    border-left-color: var(--atlas-editor-caret, #d4d4d4);
+    border-left-color: var(--editor-caret, #d4d4d4);
     border-left-width: 2px;
   }
   .cm-matchingBracket {
-    background-color: var(--atlas-editor-match-bracket-background, #2d2d2d);
-    outline: 1px solid var(--atlas-editor-match-bracket-border, #3d3d3d);
+    background-color: var(--editor-match-bracket-background, #2d2d2d);
+    outline: 1px solid var(--editor-match-bracket-border, #3d3d3d);
   }
   .cm-foldPlaceholder {
     background-color: var(--secondary, #1a1a1a);
@@ -1608,7 +835,7 @@
     cursor: pointer;
   }
   .reader-content a:hover {
-    color: var(--atlas-primary-hover);
+    color: var(--primary-hover);
   }
   .reader-content img {
     max-width: 100%;
@@ -1668,7 +895,7 @@
   }
   .reader-content hr {
     border: none;
-    border-top: 1px solid var(--atlas-border-subtle);
+    border-top: 1px solid var(--border-subtle);
     margin: 1em 0;
   }
   .reader-content nav,
@@ -1697,60 +924,6 @@
     opacity: 1;
     transform: translateY(0);
   }
-}
-/* A tab's label dissolves under its close button on hover.
-
-   The button used to reserve a slot: `pr-7` on closable tabs against `pl-3` on
-   every tab, so a tab that could be closed sat visibly off-centre whether or
-   not the pointer was anywhere near it — 16px of empty space on the right for
-   a control that is invisible most of the time. Padding is symmetric now and
-   the button overlays the label, with this mask taking the label out from
-   under it. Paint only: no layout, so revealing the button still moves
-   nothing.
-
-   The ramp is sized to the button, not chosen by eye: the × is 16px wide at a
-   6px inset, so against the tab's 16px side padding it covers the label's last
-   6px. Clear by then and ramping from 18px means no letter is ever left
-   half-lit under the glyph, which read as a typo rather than as a fade.
-
-   The second selector is `:has(button:focus-visible)` and not `:focus-within`.
-   The tab is `tabIndex={0}`, so clicking one focuses the TAB — which kept
-   `:focus-within` true for as long as it stayed selected, masking the label
-   long after the pointer had gone while the × (shown on hover, or on its own
-   focus-visible) was nowhere to be seen. "Settings" sat there reading
-   "Setting". The mask has to be on exactly when the button it makes room for
-   is, so it matches that button's own conditions rather than the tab's.
-
-   Prefixed as well as not: WKWebView is the target and the two have differed
-   on mask-image before. */
-.atlas-tab:hover .atlas-tab-label,
-.atlas-tab:has(button:focus-visible) .atlas-tab-label {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    #000 calc(100% - 18px),
-    transparent calc(100% - 5px)
-  );
-  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent calc(100% - 5px));
-}
-
-/* A scroll list that fades its own rows out at the bottom edge.
- *
- * For surfaces an opaque gradient cannot sit on: the session dropdown is
- * translucent and blurred, so `ScrollFade`'s colour ramp would punch a solid
- * strip through the blur (the rule the search row and the sticky headings
- * already follow). A mask fades the CONTENT instead of painting over it, so
- * there is no colour to get wrong and nothing to flatten the blur.
- *
- * Static, not measured: this is a `mask-image` on the scroller, so the fade
- * follows the viewport's bottom edge and resolves itself — at the end of the
- * list the last row simply scrolls into the clear part of the mask. Nothing
- * to subscribe to, and no state that can disagree with the scroll position.
- *
- * Prefixed as well as not: WKWebView is the target and the two have differed
- * on mask-image before. */
-.atlas-scroll-mask-b {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
 }
 
 .atlas-pill-in {
@@ -1808,17 +981,6 @@
   animation: atlas-panel-in-tl 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Stats-rail collapse — the Timeline's summary opening and closing.
-
-   Two curves, on purpose. The wrapper's HEIGHT uses the house decelerating
-   curve, because a height that overshoots would open a gap under a fixed-height
-   panel and then close it. The CONTENT gets the overshoot instead: it settles
-   just past its resting place and eases back, which is what reads as spring
-   rather than as a drawer sliding. Separating them is the whole trick. */
-.atlas-rail {
-  transition: height 340ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
 /* The Session detail's two-pane split (detail | grounded chat).
  *
  * The detail still gives up the space — the chat's column takes its full width
@@ -1839,11 +1001,6 @@
 }
 .atlas-split-in {
   animation: atlas-split-in 260ms cubic-bezier(0.32, 0.72, 0, 1) both;
-}
-.atlas-rail-body {
-  transition:
-    transform 380ms cubic-bezier(0.22, 1.4, 0.36, 1),
-    opacity 200ms ease-out;
 }
 
 /* Breathing ring — the Timeline's live/attention markers and stat dots. A
@@ -2102,7 +1259,6 @@
   .atlas-panel-in-tl,
   .atlas-timeline-row,
   .atlas-bubble-in,
-  .atlas-menu-pop,
   .atlas-group-slide-left,
   .atlas-group-slide-right,
   .atlas-pill-swap {
@@ -2150,11 +1306,6 @@
   /* The two looping animations in the chrome: the capture dot's halo and the
      Timeline teaser's rail pulse. Both are decorative. */
   /* The dashes stay — only their travel stops. */
-  /* The rail snaps instead of springing. */
-  .atlas-rail,
-  .atlas-rail-body {
-    transition: none;
-  }
   .atlas-live-pulse,
   .atlas-ants,
   .animate-ping,
@@ -2174,216 +1325,6 @@
   .atlas-split-in {
     animation: none;
   }
-}
-
-/* Active match in the terminal search (brighter than the other matches). */
-.term-match-active {
-  background: var(--atlas-status-warning-foreground) !important;
-  color: #000 !important;
-}
-
-/* Chat markdown styling. The old <Markdown> component attached Tailwind
-   utilities to each tag via react-markdown's `components` override; the
-   cached pipeline emits bare HTML, so the same rules live as plain CSS
-   here. Tokens match the values that were inline. */
-.prose-chat h1 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0.75rem 0 0.25rem;
-}
-.prose-chat h2 {
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin: 0.75rem 0 0.25rem;
-}
-.prose-chat h3 {
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin: 0.5rem 0 0.25rem;
-}
-.prose-chat p {
-  margin: 0.375rem 0;
-}
-.prose-chat ul {
-  list-style-type: disc;
-  padding-left: 1.25rem;
-  margin: 0.5rem 0;
-}
-.prose-chat ol {
-  list-style-type: decimal;
-  padding-left: 1.25rem;
-  margin: 0.5rem 0;
-}
-.prose-chat li + li {
-  margin-top: 0.125rem;
-}
-.prose-chat blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.75rem;
-  margin: 0.5rem 0;
-  color: var(--secondary-foreground);
-}
-.prose-chat pre {
-  position: relative;
-  border: 1px solid var(--border);
-  background: var(--card);
-  padding: 0.75rem;
-  border-radius: 0.375rem;
-  margin: 0.5rem 0;
-  font-size: 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  overflow: hidden;
-}
-/* `wordWrap` off: long lines keep their shape and the block scrolls. */
-html[data-word-wrap="off"] .prose-chat pre {
-  white-space: pre;
-  word-break: normal;
-  overflow-wrap: normal;
-  overflow-x: auto;
-}
-
-/* Code-block affordances injected by CachedMarkdown — a hover-revealed
-   language label + copy button floated at the top-right of each block. */
-.atlas-code-bar {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  opacity: 0;
-  transition: opacity 120ms ease-out;
-}
-.prose-chat pre:hover .atlas-code-bar {
-  opacity: 1;
-}
-.atlas-code-lang {
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted-foreground);
-  font-family: var(--font-mono);
-}
-.atlas-code-copy {
-  font-size: 10px;
-  line-height: 1;
-  padding: 3px 7px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--secondary-foreground);
-  cursor: pointer;
-  transition:
-    color 120ms ease-out,
-    background 120ms ease-out;
-}
-.atlas-code-copy:hover {
-  color: var(--foreground);
-  background: var(--atlas-element-hover);
-}
-.prose-chat code {
-  padding: 0.125rem 0.25rem;
-  border-radius: 0.25rem;
-  background: var(--card);
-  color: var(--foreground);
-  font-size: 12px;
-  font-family: var(--font-mono);
-}
-.prose-chat pre code {
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  font-size: inherit;
-}
-/* A link in rendered markdown reads by colour alone and is underlined only
-   under the pointer or keyboard focus. The colour is the info hue rather than
-   `--primary`: several themes' primary is near the text colour (the default
-   light theme's is near-black), and without an underline at rest a link has to
-   be told apart by hue. The underline is a dotted rule drawn as a background
-   rather than `text-decoration`, so it runs under the service mark
-   (`.atlas-link__icon`, an inline-block that text-decoration skips) as well as
-   the text. Focus still gets the global `:focus-visible` ring on top. File
-   chips are spans (`.atlas-file-chip`), not anchors, so none of this reaches
-   them. Session messages are `.atlas-prose`; other markdown is `.prose-chat`. */
-.prose-chat a,
-.atlas-prose a {
-  color: var(--atlas-status-info-foreground);
-  text-decoration: none;
-}
-.prose-chat a:hover,
-.prose-chat a:focus-visible,
-.atlas-prose a:hover,
-.atlas-prose a:focus-visible {
-  background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
-  background-position: left bottom;
-  background-repeat: repeat-x;
-  background-size: 4px 2px;
-}
-.prose-chat strong {
-  font-weight: 600;
-}
-.prose-chat em {
-  font-style: italic;
-}
-.prose-chat hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 0.75rem 0;
-}
-.prose-chat table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  margin: 0.75rem 0;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  overflow: hidden;
-}
-.prose-chat thead {
-  background: var(--card);
-}
-.prose-chat th {
-  padding: 0.5rem 0.75rem;
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--secondary-foreground);
-  border-bottom: 1px solid var(--border);
-  border-right: 1px solid var(--border);
-}
-.prose-chat th:last-child {
-  border-right: none;
-}
-.prose-chat tr {
-  border-bottom: 1px solid var(--atlas-border-subtle);
-}
-.prose-chat tbody tr:last-child {
-  border-bottom: none;
-}
-.prose-chat td {
-  padding: 0.5rem 0.75rem;
-  vertical-align: top;
-  font-size: 12px;
-  color: var(--foreground);
-  border-right: 1px solid var(--atlas-border-subtle);
-  word-break: break-word;
-}
-.prose-chat td:last-child {
-  border-right: none;
-}
-/* Task list items (remark-gfm output) — drop the disc bullet so the
-   checkbox stands alone. */
-.prose-chat li.task-list-item,
-.prose-chat li:has(> input[type="checkbox"]) {
-  list-style: none;
-  margin-left: -1.25rem;
-}
-.prose-chat li input[type="checkbox"] {
-  margin-right: 0.375rem;
-  accent-color: var(--primary);
 }
 
 /* Atlas bars loader — four bars that shuffle (evokes the Atlas logo). Color
@@ -2428,220 +1369,6 @@ html[data-word-wrap="off"] .prose-chat pre {
       50% calc(2 * 100% / 3),
       50% calc(3 * 100% / 3);
   }
-}
-
-/* ── New transcript (agent chat rework) ─────────────────────────────────────
-   EVERY value in this block is mirrored by a constant in
-   `src/features/chat/lib/row-height.ts`. They are a contract: row heights are
-   predicted from these numbers before layout, so the virtualizer never measures
-   and never corrects. Change one, change the other — in the same commit.
-   `assert-height.ts` warns in dev when they drift.
-
-   Two rules do the heavy lifting:
-     - every block element has an explicit `line-height` in px (never a unitless
-       `leading-*`, which resolves against font-size and rounds unpredictably);
-     - code blocks DO NOT WRAP. `white-space: pre` + horizontal scroll makes a
-       fenced block's height a function of its line count alone, independent of
-       the container width. Wrapping code is what made prose height
-       width-dependent and unpredictable.                                     */
-
-.atlas-prose {
-  /* 13px/21px, down from 14px/22px: at the reading measure this is the size the
-     eye settles at, and the extra leading buys back the density the smaller
-     glyphs would otherwise cost. */
-  font-size: 13px;
-  line-height: 21px;
-  color: var(--foreground);
-  word-break: break-word;
-  overflow-wrap: anywhere;
-}
-/* Uniform inter-block gap via margin-top only — no bottom margins, so there is
-   no margin collapsing to reason about. 12px rather than 8px: paragraphs that
-   nearly touch read as one wall of text, and the whole point of the measure is
-   that it can be skimmed. */
-.atlas-prose > * {
-  margin: 12px 0 0;
-}
-.atlas-prose > :first-child {
-  margin-top: 0;
-}
-
-.atlas-prose p {
-  line-height: 21px;
-}
-.atlas-prose h1 {
-  font-size: 15px;
-  line-height: 23px;
-  font-weight: 600;
-  margin-top: 18px;
-}
-.atlas-prose h2,
-.atlas-prose h3,
-.atlas-prose h4,
-.atlas-prose h5,
-.atlas-prose h6 {
-  font-size: 13px;
-  line-height: 20px;
-  font-weight: 600;
-  margin-top: 18px;
-}
-
-/* Bullets are drawn as `::before` text, not `list-style: disc`. WebKit
-   leaves a native marker's box out of the fill it paints between selected
-   blocks, so a selection across list items showed a dark box beside every
-   bullet. Generated content is not part of a selection, and as an
-   inline-block in the line (not absolutely positioned, which WebKit also
-   clips out of that fill) it leaves no hole. */
-.atlas-prose ul {
-  list-style: none;
-  padding-left: 20px;
-}
-.atlas-prose ul > li:not(:has(> input[type="checkbox"]))::before {
-  content: "•";
-  display: inline-block;
-  width: 20px;
-  margin-left: -20px;
-  text-align: center;
-}
-.atlas-prose ul ul > li:not(:has(> input[type="checkbox"]))::before {
-  content: "◦";
-}
-.atlas-prose ol {
-  list-style-type: decimal;
-  padding-left: 20px;
-}
-.atlas-prose li {
-  line-height: 21px;
-}
-.atlas-prose li + li {
-  margin-top: 4px;
-}
-
-.atlas-prose blockquote {
-  border-left: 2px solid var(--border);
-  padding: 4px 0 4px 12px;
-  color: var(--secondary-foreground);
-}
-
-.atlas-prose pre {
-  position: relative;
-  border: 1px solid var(--border);
-  background: var(--card);
-  border-radius: 6px;
-  padding: 12px;
-  font-size: 12px;
-  line-height: 18px;
-  /* Width-independent height — the whole point. */
-  white-space: pre;
-  overflow-x: auto;
-  overflow-y: hidden;
-}
-.atlas-prose pre code {
-  padding: 0;
-  background: transparent;
-  border-radius: 0;
-  color: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  white-space: inherit;
-}
-.atlas-prose code {
-  padding: 0.125rem 0.25rem;
-  border-radius: 4px;
-  background: var(--card);
-  color: var(--foreground);
-  font-size: 12px;
-  font-family: var(--font-mono);
-}
-
-.atlas-prose hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 6px 0;
-}
-
-.atlas-prose strong {
-  font-weight: 600;
-}
-.atlas-prose em {
-  font-style: italic;
-}
-
-/* `display: block` was here (to make the table scroll internally, back when row
-   heights had to be predicted). It also stops the element being a TABLE: block
-   boxes don't do table layout, so `width: 100%` no longer distributes across
-   columns, cells collapse to their content and the whole thing renders ragged
-   and clipped. Heights are measured now, not predicted, so the cap and the
-   scroller are both unnecessary — this is a plain table again.
-   Wide tables wrap inside cells (see `overflow-wrap` below) rather than
-   scrolling, which is the right trade in a 760px reading measure. */
-.atlas-prose table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: auto;
-  font-size: 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-/* `break-word`, not `anywhere` (which `.atlas-prose` sets and cells would
-   otherwise inherit): both still break a long unbroken run inside a cell, but
-   `anywhere` also shrinks the cell's MIN-CONTENT width to a single character,
-   so auto layout squeezed short columns and split words like "Chan|ge". */
-.atlas-prose th,
-.atlas-prose td {
-  overflow-wrap: break-word;
-  word-break: normal;
-}
-.atlas-prose thead {
-  background: var(--card);
-}
-.atlas-prose th {
-  padding: 8px 12px;
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--secondary-foreground);
-  border-bottom: 1px solid var(--border);
-}
-.atlas-prose td {
-  padding: 7px 12px;
-  vertical-align: top;
-  border-bottom: 1px solid var(--atlas-border-subtle);
-}
-/* Markdown has no headerless table: `| | |` over a delimiter row is the only
-   way to write one, and it renders as a blank band above the first real row.
-   Collapse it when every cell is empty, so a two-column key/value table reads
-   as the list it is. */
-.atlas-prose thead:not(:has(th:not(:empty))) {
-  display: none;
-}
-
-/* User prompt bubbles run through the same prose renderer as the agent's
-   replies, one step up the type scale (they sit in a tinted bubble at a
-   narrower measure, where 13px reads small). The bubble owns the padding, so
-   the first and last blocks must not add their own. Applied to the markdown
-   root inside the bubble, never the bubble itself: the `> *` rules have to
-   land on the blocks, not on the renderer's wrapper div. */
-.atlas-prose--user {
-  font-size: 14px;
-  line-height: 22px;
-}
-.atlas-prose--user > * {
-  margin-top: 10px;
-}
-.atlas-prose--user > :first-child {
-  margin-top: 0;
-}
-.atlas-prose--user p,
-.atlas-prose--user li {
-  line-height: 22px;
-}
-/* Fences inside a bubble sit on the bubble's own tint, not the thread's
-   surface, or they read as a hole punched through it. */
-.atlas-prose--user pre {
-  background: color-mix(in srgb, var(--background) 55%, transparent);
-  border-color: color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 /* Row containment scopes reflow + style recalc to the row.
@@ -2692,7 +1419,7 @@ html[data-word-wrap="off"] .prose-chat pre {
 }
 
 :root {
-  --atlas-rail-divider: color-mix(in srgb, var(--atlas-border-strong) 65%, var(--background));
+  --atlas-rail-divider: color-mix(in srgb, var(--border-strong) 65%, var(--background));
 }
 
 .atlas-project-rail {
@@ -2773,11 +1500,20 @@ html[data-word-wrap="off"] .prose-chat pre {
 
 /* Nobody is looking: the window is hidden, the session sits in a background
    tab (still laid out, where animations keep running), or the row is
-   scrolled away. See `src/lib/visible-animation.ts`. */
-:root[data-atlas-hidden] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
-[data-atlas-offstage] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
-[data-offscreen] :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell),
-:is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell)[data-offscreen] {
+   scrolled away. See `src/lib/visible-animation.ts`. `animate-pulse` is the
+   package `Skeleton`'s loop, so loading placeholders park too. */
+:root[data-atlas-hidden]
+  :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell, .animate-pulse),
+[data-atlas-offstage]
+  :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell, .animate-pulse),
+[data-offscreen]
+  :is(.atlas-thinking-shimmer, .atlas-marker-running, .atlas-pixel-cell, .animate-pulse),
+:is(
+  .atlas-thinking-shimmer,
+  .atlas-marker-running,
+  .atlas-pixel-cell,
+  .animate-pulse
+)[data-offscreen] {
   animation-play-state: paused;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2810,20 +1546,6 @@ html[data-word-wrap="off"] .prose-chat pre {
   .atlas-pixel-cell {
     animation: none;
   }
-}
-
-/* Markdown that has not finished parsing yet — see `CachedMarkdown`.
-   Rendered as the raw source at the same size as the formatted result, so an
-   unparsed block occupies roughly its final height instead of collapsing to
-   zero. A screen of zero-height blocks is what made the transcript flash blank
-   at the moment its window grew. */
-.atlas-md-pending {
-  margin: 0;
-  font: inherit;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  color: inherit;
 }
 
 /* Toast descriptions — sonner ships a light-theme colour we never overrode.
@@ -2881,23 +1603,6 @@ html[data-word-wrap="off"] .prose-chat pre {
 .atlas-arc-spin {
   animation: atlas-arc-spin 1.1s linear infinite;
   transform-origin: center;
-}
-
-/* Dropup menu entrance (the composer's + menu and its submenus): a soft
-   scale/rise from the trigger. One-shot, ends at identity, no fill-mode. */
-@keyframes atlas-menu-pop {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-.atlas-menu-pop {
-  transform-origin: var(--transform-origin, bottom left);
-  animation: atlas-menu-pop 0.2s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* Grouped composer menu: direction-aware content slide when switching tabs.
@@ -3106,9 +1811,21 @@ html[data-word-wrap="off"] .prose-chat pre {
   [data-toast-copy] {
   opacity: 1;
 }
+/* "Fix with agent" on an error toast (toast-icons.tsx), beside the copy
+   button and before any action. `hidden` until it has read the toast's text,
+   and for good when that text gives an agent nothing to fix (toast-fix.ts). */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-toast-fix] {
+  display: flex;
+  order: 2;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-toast-fix][hidden] {
+  display: none;
+}
 [data-sonner-toaster]
   [data-sonner-toast][data-styled="true"][data-expanded="false"][data-front="false"]
-  :is([data-toast-glyph], [data-toast-copy]) {
+  :is([data-toast-glyph], [data-toast-copy], [data-toast-fix]) {
   opacity: 0;
 }
 
@@ -3116,7 +1833,7 @@ html[data-word-wrap="off"] .prose-chat pre {
 
 /* Which font wins, for both families: the user's setting, then the active
    theme's `font-sans` / `font-mono` (which `apply-theme.ts` writes in its own
-   `html:root` block), then Atlas's default in `tokens.css`. The attribute is
+   `html:root` block), then Atlas's default, Geist, from `@tryatlas/design`. The attribute is
    what lets a setting outrank the theme. Every `font-sans` / `font-mono`
    utility, and every rule that reads those two, follows. */
 html:root[data-ui-font] {
@@ -3124,12 +1841,6 @@ html:root[data-ui-font] {
 }
 html:root[data-code-font] {
   --font-mono: var(--atlas-code-font), monospace;
-}
-
-/* `terminalFontSize` sets the command line; a command's output runs a pixel
-   under it, as it always has (12px against 13). */
-.atlas-terminal-output {
-  font-size: calc(var(--atlas-terminal-font-size, 13px) - 1px);
 }
 
 /* `chatWidth`: the transcript and composer column (`CONTENT_COLUMN`). */
@@ -3149,8 +1860,8 @@ html[data-chat-width="full"] {
    (`diff-gutter.ts`), and a modified file's mark in the review diff (its
    header icon, its tree row). */
 :root {
-  --atlas-diff-changed-bar: var(--atlas-status-info-foreground);
-  --atlas-diff-modified-text: var(--atlas-status-warning-foreground);
+  --atlas-diff-changed-bar: var(--status-info-foreground);
+  --atlas-diff-modified-text: var(--status-warning-foreground);
 }
 
 /* `diffPalette = "blue-orange"`: the theme's own info blue and warning orange
@@ -3161,30 +1872,14 @@ html[data-chat-width="full"] {
    used, so both step back to the gutter's neutral: three marks, three
    colours. */
 html:root[data-diff-palette="blue-orange"] {
-  --atlas-diff-changed-bar: var(--atlas-editor-gutter-foreground);
-  --atlas-diff-modified-text: var(--atlas-editor-gutter-foreground);
-  --atlas-diff-added-text: var(--atlas-status-info-foreground);
-  --atlas-diff-added-background: color-mix(
-    in srgb,
-    var(--atlas-status-info-foreground) 13%,
-    transparent
-  );
-  --atlas-diff-added-emphasis: color-mix(
-    in srgb,
-    var(--atlas-status-info-foreground) 34%,
-    transparent
-  );
-  --atlas-diff-removed-text: var(--atlas-status-warning-foreground);
-  --atlas-diff-removed-background: color-mix(
-    in srgb,
-    var(--atlas-status-warning-foreground) 13%,
-    transparent
-  );
-  --atlas-diff-removed-emphasis: color-mix(
-    in srgb,
-    var(--atlas-status-warning-foreground) 34%,
-    transparent
-  );
+  --atlas-diff-changed-bar: var(--editor-gutter-foreground);
+  --atlas-diff-modified-text: var(--editor-gutter-foreground);
+  --diff-added-text: var(--status-info-foreground);
+  --diff-added-background: color-mix(in srgb, var(--status-info-foreground) 13%, transparent);
+  --diff-added-emphasis: color-mix(in srgb, var(--status-info-foreground) 34%, transparent);
+  --diff-removed-text: var(--status-warning-foreground);
+  --diff-removed-background: color-mix(in srgb, var(--status-warning-foreground) 13%, transparent);
+  --diff-removed-emphasis: color-mix(in srgb, var(--status-warning-foreground) 34%, transparent);
 }
 
 /* A thinking row's live thought (`ThinkingRowView`): at most four lines, the
@@ -3200,4 +1895,75 @@ html:root[data-diff-palette="blue-orange"] {
 
 .atlas-live-thought[data-clipped] {
   mask-image: linear-gradient(to bottom, transparent, black 20px);
+}
+
+/* ── Linux: long-running animations at a stepped frame rate ───────────────
+   WebKitGTK presents a full-window frame for every tick of an accelerated
+   animation, and the UI process pays for each one on the main thread: the
+   sidebar's 14 px working ring, turning once every 3 s while a terminal
+   session is live, measured 40% of a core on an otherwise idle project.
+   macOS composites the same ring for nothing, which is why it never showed.
+
+   `steps()` makes the compositor produce only N frames per cycle instead of
+   one per vsync; each rule below lands near 12 fps for its duration. The
+   easing becomes linear steps on this platform, a trade taken on purpose.
+   Scoped to the class `markPlatform()` sets, so every other platform keeps
+   its motion. `tests/linux-animation-steps.test.ts` requires a rule
+   here for every infinite animation in this file and every CSS one in
+   `@tryatlas/design`'s `INFINITE_ANIMATIONS`; the package's JS loops read
+   `--infinite-animation-fps` instead, since no stylesheet reaches them. */
+html.platform-linux {
+  --infinite-animation-fps: 12;
+}
+html.platform-linux .animate-spin {
+  /* 1 s spinners; the working ring sets 36 for its 3 s turn. */
+  animation-timing-function: steps(var(--atlas-linux-spin-steps, 12));
+}
+html.platform-linux .animate-pulse {
+  animation-timing-function: steps(24);
+}
+/* The package's SessionPipeline: a 3 s turn, like the working ring. */
+html.platform-linux .animate-spin[data-slot="session-pipeline-running"] {
+  animation-timing-function: steps(36);
+}
+/* The package's IconButton `loading`: a 1 s turn, like any spinner. */
+html.platform-linux .animate-spin[data-slot="icon-button-spin"] {
+  animation-timing-function: steps(12);
+}
+/* The package's Globe, whose `motion-safe:` variants `.animate-ping` and
+   `.animate-pulse` rules do not match. */
+html.platform-linux [data-slot="globe-ping"] {
+  animation-timing-function: steps(12);
+}
+html.platform-linux [data-slot="globe-live-dot"] {
+  animation-timing-function: steps(24);
+}
+/* The package's CheckpointTrace: a live session's leading edge, a 2 s
+   `motion-safe:animate-pulse`. */
+html.platform-linux [data-slot="checkpoint-trace-live-edge"] {
+  animation-timing-function: steps(24);
+}
+html.platform-linux .atlas-live-pulse {
+  animation-timing-function: steps(24);
+}
+html.platform-linux .atlas-ants {
+  animation-timing-function: steps(8);
+}
+html.platform-linux .atlas-timeline-beam {
+  animation-timing-function: steps(40);
+}
+html.platform-linux .atlas-radar-sweep {
+  animation-timing-function: steps(190);
+}
+html.platform-linux .atlas-loader {
+  animation-timing-function: steps(12);
+}
+html.platform-linux .atlas-marker-running {
+  animation-timing-function: steps(17);
+}
+html.platform-linux .atlas-pixel-cell {
+  animation-timing-function: steps(10);
+}
+html.platform-linux .atlas-arc-spin {
+  animation-timing-function: steps(13);
 }

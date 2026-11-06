@@ -24,19 +24,6 @@ import {
   Settings2,
   WrapText,
 } from "lucide-react";
-import { IconButton } from "@/ui/icon-button";
-import { Segmented } from "@/ui/segmented";
-import { Hint } from "@/ui/tooltip";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { ContextMenu, ContextMenuTrigger } from "@/ui/context-menu";
 import { useScopedHotkeys } from "@/features/keybindings/lib/use-scoped-hotkeys";
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { useWordWrap } from "@/features/settings/lib/use-word-wrap";
@@ -44,7 +31,6 @@ import { cn } from "@/lib/utils";
 import type { DiffFileStat } from "../../lib/git-review-api";
 import { buildFileDiffContentVersion, fnv1a32 } from "../../lib/diff-rendering";
 import { useDiffJump } from "../../lib/diff-jump";
-import { formatCompactCount } from "../../lib/format-compact-count";
 import type { ReviewFile } from "../../lib/use-review-files";
 import {
   isFolded,
@@ -59,6 +45,21 @@ import { DiffFindBar, type DiffFindHandle } from "./diff-find-bar";
 import { DiffPanelSkeleton } from "./diff-panel-skeleton";
 import { FileViewedContext, FileViewedToggle, type FileViewedState } from "./file-viewed-toggle";
 import { StyledCodeView, type StyledCodeViewOptions } from "./styled-code-view";
+import {
+  IconButton,
+  Segmented,
+  Hint,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  ContextMenu,
+  ContextMenuTrigger,
+  formatDiffCount,
+} from "@tryatlas/design";
 
 /**
  * The diff panel's view: a header of how to show the diff, and every file of
@@ -176,11 +177,11 @@ export const DiffStat = memo(function DiffStat({
       aria-label={`${additions} additions, ${deletions} deletions`}
       className={cn("inline-flex items-center gap-1 font-mono text-2xs tabular-nums", className)}
     >
-      <span aria-hidden className="text-[var(--atlas-diff-added-text)]">
-        +{formatCompactCount(additions)}
+      <span aria-hidden className="text-[var(--diff-added-text)]">
+        +{formatDiffCount(additions)}
       </span>
-      <span aria-hidden className="text-[var(--atlas-diff-removed-text)]">
-        −{formatCompactCount(deletions)}
+      <span aria-hidden className="text-[var(--diff-removed-text)]">
+        −{formatDiffCount(deletions)}
       </span>
     </span>
   );
@@ -202,11 +203,11 @@ export const HeaderStat = memo(function HeaderStat({
       aria-label={`${additions} additions, ${deletions} deletions`}
       className="inline-grid grid-cols-[4ch_4ch] gap-2 text-right font-mono text-xs tabular-nums"
     >
-      <span aria-hidden className="text-[var(--atlas-diff-added-text)]">
-        +{formatCompactCount(additions)}
+      <span aria-hidden className="text-[var(--diff-added-text)]">
+        +{formatDiffCount(additions)}
       </span>
-      <span aria-hidden className="text-[var(--atlas-diff-removed-text)]">
-        −{formatCompactCount(deletions)}
+      <span aria-hidden className="text-[var(--diff-removed-text)]">
+        −{formatDiffCount(deletions)}
       </span>
     </span>
   );
@@ -217,9 +218,9 @@ export const HeaderStat = memo(function HeaderStat({
 function chevronToneOf(fileDiff: FileDiffMetadata): string {
   switch (fileDiff.type) {
     case "new":
-      return "text-[var(--atlas-diff-added-text)]";
+      return "text-[var(--diff-added-text)]";
     case "deleted":
-      return "text-[var(--atlas-diff-removed-text)]";
+      return "text-[var(--diff-removed-text)]";
     case "change":
     case "rename-pure":
     case "rename-changed":
@@ -776,7 +777,7 @@ export function DiffPanelView({
       ref={rootRef}
       tabIndex={-1}
       data-diff-panel
-      className="flex h-full min-h-0 flex-col bg-[var(--atlas-editor-background)] outline-none"
+      className="flex h-full min-h-0 flex-col bg-[var(--editor-background)] outline-none"
     >
       {header}
       {source.placeholder ? null : source.banner}

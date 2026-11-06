@@ -193,31 +193,6 @@ function newOpId(): string {
  * watcher after any mutation, including our own `emit_synthetic_change`) drives
  * a live refresh of the things that change frequently.
  */
-/** How many mounted views currently read `diff` (the whole-working-tree
- *  fallback diff). `loadDiff` is a no-op at zero so background fs/git events
- *  don't spawn git + ship multi-MB strings for data nothing renders. */
-let diffConsumers = 0;
-
-/** Mount-scoped: call from an effect in any view that reads `diff`; returns
- *  the release fn for cleanup. Fetches on retain so the view never sees the
- *  stale/empty diff the gate left behind, and drops the retained string when
- *  the last consumer leaves. */
-export function retainGitDiff(): () => void {
-  diffConsumers += 1;
-  void useGitStore.getState().actions.loadDiff();
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    diffConsumers -= 1;
-    if (diffConsumers === 0) {
-      useGitStore.setState((s) => {
-        s.diff = "";
-      });
-    }
-  };
-}
-
 let gitStatusFreshListenerInit = false;
 function ensureGitStatusFreshListener(): void {
   if (gitStatusFreshListenerInit) return;
@@ -254,8 +229,8 @@ function ensureGitStatusFreshListener(): void {
   // Live updates from the git watcher — commit / checkout / branch / fetch /
   // stage / push all fire `atlas:git-changed`. One snapshot call covers
   // status, branches, ahead/behind, stashes and in-progress state (the old
-  // six-loader fan-out was 10-25 git spawns per change); the log and the
-  // working diff are the only extra loads.
+  // six-loader fan-out was 10-25 git spawns per change); the log is the
+  // only extra load.
   void listen<{ project: string }>("atlas:git-changed", (e) => {
     const current = useGitStore.getState().repoPath;
     if (!current || current !== e.payload.project) return;
@@ -266,7 +241,6 @@ function ensureGitStatusFreshListener(): void {
     // and so lands on this event, and none of them reload the log
     // themselves.
     void actions.loadLog(current).catch(() => {});
-    void actions.loadDiff().catch(() => {});
   });
 
   // Streaming output from long git operations (commit hooks today; push/
@@ -330,7 +304,6 @@ function ensureGitStatusFreshListener(): void {
       if (!repoPath) return;
       const actions = useGitStore.getState().actions;
       void actions.refreshStatusNow(repoPath).catch(() => {});
-      void actions.loadDiff().catch(() => {});
     }, 120);
   });
 }
@@ -338,11 +311,12 @@ function ensureGitStatusFreshListener(): void {
 interface GitState {
   isRepo: boolean;
   branch: string;
+  /** HEAD is detached: `branch` names no branch. */
+  detached: boolean;
   branches: GitBranch[];
   branchesFull: BranchInfo[];
   files: GitFileStatus[];
   log: GitLogEntry[];
-  diff: string;
   ahead: number;
   behind: number;
   loading: boolean;
@@ -377,7 +351,6 @@ interface GitActions {
     showPullChoice: (choice: PullChoice) => void;
     dismissPullChoice: () => void;
     loadLog: (path: string) => Promise<void>;
-    loadDiff: () => Promise<void>;
     listBranches: () => Promise<void>;
     loadBranchesFull: () => Promise<void>;
     loadStashes: () => Promise<void>;
@@ -446,11 +419,11 @@ export const useGitStore = createSelectors(
       return {
         isRepo: false,
         branch: "",
+        detached: false,
         branches: [],
         branchesFull: [],
         files: [],
         log: [],
-        diff: "",
         ahead: 0,
         behind: 0,
         loading: false,
@@ -488,6 +461,7 @@ export const useGitStore = createSelectors(
               set((s) => {
                 s.isRepo = snap.isRepo;
                 s.branch = snap.branch;
+                s.detached = snap.detached;
                 s.files = sameFiles(
                   s.files,
                   snap.files.map((f) => ({
@@ -536,25 +510,6 @@ export const useGitStore = createSelectors(
               });
             } catch {
               /* not a repo */
-            }
-          },
-          loadDiff: async () => {
-            // Subscriber-gated: the whole-working-tree diff has exactly one
-            // consumer (the changes view's no-selection fallback), yet this
-            // used to run on EVERY fs burst and git event — a git spawn plus
-            // a potentially multi-MB string over IPC into the store, for data
-            // nothing rendered. `retainGitDiff` re-fetches on mount, so
-            // skipped loads are recovered the moment the view opens.
-            if (diffConsumers === 0) return;
-            const p = repo();
-            if (!p) return;
-            try {
-              const diff = await invoke<string>("git_diff_all", { path: p });
-              set((s) => {
-                s.diff = diff;
-              });
-            } catch {
-              /* ignore */
             }
           },
           listBranches: async () => {
@@ -632,9 +587,9 @@ export const useGitStore = createSelectors(
           refreshAll: async (path) => {
             const a = get().actions;
             // The snapshot covers status/branches/stashes/in-progress;
-            // only the diff, remotes, tags and log are separate loads.
+            // only the remotes, tags and log are separate loads.
             await a.loadStatus(path);
-            await Promise.all([a.loadDiff(), a.loadRemotes(), a.loadTags(), a.loadLog(path)]);
+            await Promise.all([a.loadRemotes(), a.loadTags(), a.loadLog(path)]);
           },
 
           checkout: async (branch) => {
@@ -645,7 +600,6 @@ export const useGitStore = createSelectors(
             // Switching branches changes HEAD + working-tree status — update
             // now; the watcher (HEAD move) reconciles branch lists shortly.
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           createBranch: async (name) => {
             const p = repo();
@@ -681,7 +635,6 @@ export const useGitStore = createSelectors(
             await invoke("git_undo_commit", { path: p });
             await get().actions.refresh(p);
             void get().actions.loadLog(p);
-            void get().actions.loadDiff();
           },
           squashLast: async (count, summary, description) => {
             const p = repo();
@@ -709,28 +662,24 @@ export const useGitStore = createSelectors(
             // Refresh immediately — don't wait for the `.git/index` fs
             // watcher (FSEvents latency + 200 ms debounce + stale round-trip).
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           unstageFiles: async (paths) => {
             const p = repo();
             if (!p) return;
             await invoke("git_unstage", { path: p, files: paths });
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           discard: async (paths) => {
             const p = repo();
             if (!p) return;
             await invoke("git_discard", { path: p, files: paths });
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           discardAdded: async (paths) => {
             const p = repo();
             if (!p) return;
             await invoke("git_delete_added", { path: p, files: paths });
             await get().actions.refreshStatusNow(p);
-            void get().actions.loadDiff();
           },
           commit: async (summary, description, amend = false, coAuthors) => {
             const p = repo();
@@ -756,7 +705,6 @@ export const useGitStore = createSelectors(
             // Commit clears the staged set and moves HEAD — one snapshot
             // covers status, ahead/behind and branches.
             await get().actions.refresh(p);
-            void get().actions.loadDiff();
           },
           fetch: async () => {
             const p = repo();

@@ -1,39 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-
-export type ThemeMode = "system" | "dark" | "light";
-export type ThemeAppearance = "dark" | "light";
-/** The table spelling of a theme key. Rust rejects a `font_style` here:
- *  nothing between a theme key and CodeMirror, highlight.js or the markdown
- *  renderer can carry one, so accepting it would render upright in silence. */
-export type ThemeKeyStyle = { color: string };
-export type ThemeKeyValue = string | ThemeKeyStyle;
-
-export interface ThemeVariant {
-  base: Record<string, string>;
-  palette: Record<string, string>;
-  keys: Record<string, ThemeKeyValue>;
-}
-
-export interface Theme {
-  schema: number;
-  id: string;
-  name: string;
-  author: string;
-  license: string;
-  /** Base tokens both variants share (shadcn's `cssVars.theme`). Already
-   *  merged into each variant's `base` by Rust; omitted when empty. */
-  base?: Record<string, string>;
-  dark?: ThemeVariant;
-  light?: ThemeVariant;
-  /** Omitted by Rust when there are no forward-compatibility warnings. */
-  warnings?: ThemeWarning[];
-}
-
-export interface ThemeWarning {
-  key: string;
-  message: string;
-}
+import type { Theme, ThemeWarning } from "@tryatlas/design/theme";
 
 export interface ThemeSummary {
   id: string;

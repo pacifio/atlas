@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Theme } from "./theme-api";
 import type { OpenVsxExtension } from "@/lib/open-vsx";
+import type { Theme } from "@tryatlas/design/theme";
 
 /**
  * Theme import and export (decision 15).

@@ -206,6 +206,8 @@ impl TokenFiles {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700))?;
         }
+        // Only the unix arm below sets a mode on it.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);

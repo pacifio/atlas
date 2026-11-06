@@ -25,22 +25,6 @@ import type { PullRequestLink, ThreadRow } from "@/features/chat/lib/history-api
 import { useThreadHistory } from "@/features/session-context/lib/session-lineage";
 import { timeAgo } from "@/lib/time-ago";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { IconButton } from "@/ui/icon-button";
 
 import {
   toChangeBreakdown,
@@ -73,6 +57,20 @@ import {
   type QuickActionEntry,
 } from "./pull-request-quick-actions";
 import { SessionPullRequestMenuItems } from "./session-pull-request-menu";
+import {
+  Button,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  IconButton,
+} from "@tryatlas/design";
 
 const NO_LINKS: PullRequestLink[] = [];
 const NO_ACTIONS: ReadonlySet<PrAction> = new Set();

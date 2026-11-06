@@ -15,6 +15,7 @@
  * opening it. These are the facts you pick a Session *by*.
  */
 
+import { DiffStat } from "@tryatlas/design";
 import { GitBranch, MessageSquare } from "lucide-react";
 import { Fragment, memo, type ReactNode } from "react";
 import { AccountAvatar } from "@/features/auth/components/account-avatar";
@@ -57,7 +58,7 @@ export const SessionRow = memo(function SessionRow({
       className={cn(
         // Exactly as wide as the hairlines between rows, inside them with a
         // little air above and below (the row's wrapper in
-        // `timeline-calendar.tsx`). It used to overhang the hairlines by 8px a
+        // `@tryatlas/design` TimelineCalendar). It used to overhang the hairlines by 8px a
         // side, so a selected row's rounded corners stuck out past the rules
         // and butted against the one above it.
         "flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2 py-1.5 text-left",
@@ -119,7 +120,7 @@ export const SessionRow = memo(function SessionRow({
               {s.insertions + s.deletions > 0 && (
                 <>
                   <Dot />
-                  <DiffStat added={s.insertions} removed={s.deletions} />
+                  <DiffStat added={s.insertions} removed={s.deletions} className="shrink-0" />
                 </>
               )}
             </span>
@@ -142,7 +143,7 @@ function Line({ left, right }: { left: ReactNode; right?: ReactNode }) {
 
 function Dot() {
   return (
-    <span aria-hidden className="text-[var(--atlas-text-disabled)]">
+    <span aria-hidden className="text-disabled">
       ·
     </span>
   );
@@ -180,17 +181,6 @@ export function ProjectMark({ name, className }: { name: string; className?: str
     >
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", hueFor(name))} />
       <span className="truncate">{name}</span>
-    </span>
-  );
-}
-
-/** A +/− pair. Tabular, so the column does not jitter between rows. */
-export function DiffStat({ added, removed }: { added: number; removed: number }) {
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-2xs tabular-nums">
-      <span className="text-[var(--atlas-diff-added-text)]">+{added}</span>
-      {/* U+2212 MINUS, not a hyphen: it lines up with the plus. */}
-      <span className="text-[var(--atlas-diff-removed-text)]">−{removed}</span>
     </span>
   );
 }

@@ -17,10 +17,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
 import type { SessionDetail as Detail } from "../types";
 import { sessionState, shortSessionId } from "../lib/board";
 import { SessionStatusIcon, STATE_LABEL } from "./session-status-icon";
+import { Hint } from "@tryatlas/design";
 
 /** One half of the width pair. Pressed is a filled thumb, as a segmented
  *  control's selected segment is everywhere else in the app. */

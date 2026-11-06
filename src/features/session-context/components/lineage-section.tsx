@@ -21,17 +21,17 @@ import { displayName, elapsedMs, isRunning, isTerminal } from "@/features/chat/l
 import { useChatStore } from "@/features/chat/stores/chat-store";
 import { openDetail } from "@/features/chat/stores/detail-panel-store";
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
 import type { Subagent } from "@/types/agent";
+
+import { openLineageSession, useSessionLineage, type LineageEdge } from "../lib/session-lineage";
+import { DetailsRow, DetailsSection, RowIcon, RowLabel, RowMeta } from "./details-rows";
 import {
+  IconButton,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-
-import { openLineageSession, useSessionLineage, type LineageEdge } from "../lib/session-lineage";
-import { DetailsRow, DetailsSection, RowIcon, RowLabel, RowMeta } from "./details-rows";
+} from "@tryatlas/design";
 
 /** How many children a list shows first, then how many each "Show N more" adds. */
 const INITIAL_COUNT = 6;

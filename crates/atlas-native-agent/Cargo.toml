@@ -75,6 +75,14 @@ atlas-engine-rollout = { path = "../../vendor/atlas-engine/rollout" }
 [target.'cfg(windows)'.dependencies]
 atlas-engine-windows-sandbox = { workspace = true }
 
+# The Linux sandbox helper, which the app becomes when started under the arg0
+# `atlas-engine-linux-sandbox` (`src/linux_sandbox.rs`), and the crate that
+# names that arg0 and finds bubblewrap. Linux-only, so the macOS and Windows
+# builds compile exactly what they did before Linux was supported.
+[target.'cfg(target_os = "linux")'.dependencies]
+atlas-engine-linux-sandbox = { workspace = true }
+atlas-engine-sandboxing = { workspace = true }
+
 [dev-dependencies]
 async-trait = "0.1"
 # The Linux sandbox helper, for tests only.
@@ -89,9 +97,8 @@ async-trait = "0.1"
 # `configure_test_binary_dispatch` before any test, which installs the arg0
 # aliases and hands back the helper's path.
 #
-# Dev-only on purpose. The shipped app dispatches only the argv[1] helpers
-# (`src/helper.rs`), not the Linux sandbox's arg0 alias, so giving it a Linux
-# helper path would be a lie about what the binary does.
+# The app has its own helper now (`src/linux_sandbox.rs`); the tests still use
+# the test binary, because the helper has to be the binary that is running.
 atlas-engine-sandboxing = { workspace = true }
 atlas-engine-test-binary-support = { workspace = true }
 # Pinned by the workspace to the same version `atlas-engine-core`'s tests use, so this

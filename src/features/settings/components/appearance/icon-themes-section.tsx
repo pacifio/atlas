@@ -16,10 +16,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/ui/dialog";
-import { Icon } from "@/ui/icon";
-import { Hint } from "@/ui/tooltip";
 import { useIconThemeStore } from "@/features/icon-theme/stores/icon-theme-store";
 import { IconThemePreview } from "@/features/icon-theme/components/icon-theme-preview";
 import { appearanceForMode } from "@/features/theme/apply-theme";
@@ -32,6 +28,16 @@ import {
 import type { OpenVsxExtension } from "@/lib/open-vsx";
 import { useSettingsStore } from "../../stores/settings-store";
 import { SettingsSection } from "../layout/settings-layout";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  Icon,
+  Hint,
+} from "@tryatlas/design";
 
 export function IconThemesSection() {
   const settings = useSettingsStore.use.settings();
@@ -63,54 +69,61 @@ export function IconThemesSection() {
         </Button>
       }
     >
-      <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-3">
+      <div role="list" className="grid grid-cols-2 gap-3 @2xl:grid-cols-3">
         {themes.map((theme) => {
           const selected = theme.id === settings.iconTheme;
           return (
-            <button
-              key={theme.id}
-              type="button"
-              onClick={() => {
-                updateSettings({ iconTheme: theme.id });
-                toast.success(`Applied “${theme.name}” icons`);
-              }}
-              className={cn(
-                "group flex min-h-20 cursor-pointer flex-col justify-between rounded-lg border bg-card p-3 text-left transition-colors",
-                selected ? "border-primary" : "border-border hover:border-border-strong",
-              )}
-            >
-              <IconThemePreview themeId={theme.id} appearance={appearance} className="mb-2.5 h-4" />
-              <div className="flex w-full items-start gap-1.5">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-xs font-medium text-foreground">
-                      {theme.name}
-                    </span>
-                    {selected && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />}
+            <div key={theme.id} role="listitem" className="flex min-w-0">
+              <button
+                type="button"
+                aria-pressed={selected}
+                aria-label={`Apply ${theme.name} icon theme`}
+                onClick={() => {
+                  updateSettings({ iconTheme: theme.id });
+                  toast.success(`Applied “${theme.name}” icons`);
+                }}
+                className={cn(
+                  "group flex min-h-20 min-w-0 flex-1 cursor-pointer flex-col justify-between rounded-lg border bg-card p-3 text-left transition-colors",
+                  selected ? "border-primary" : "border-border hover:border-border-strong",
+                )}
+              >
+                <IconThemePreview
+                  themeId={theme.id}
+                  appearance={appearance}
+                  className="mb-2.5 h-4"
+                />
+                <div className="flex w-full items-start gap-1.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-xs font-medium text-foreground">
+                        {theme.name}
+                      </span>
+                      {selected && <span className="h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                    </div>
+                    <p className="truncate text-2xs text-muted-foreground">
+                      {theme.author} · {theme.license}
+                    </p>
                   </div>
-                  <p className="truncate text-2xs text-muted-foreground">
-                    {theme.author} · {theme.license}
-                  </p>
+                  {!theme.builtIn && <RemoveButton id={theme.id} name={theme.name} />}
                 </div>
-                {!theme.builtIn && <RemoveButton id={theme.id} name={theme.name} />}
-              </div>
-              <div className="mt-2 flex items-center gap-1 text-3xs uppercase tracking-wide text-muted-foreground">
-                {theme.id === MINIMAL_ICON_THEME_ID ? (
-                  <span>Atlas defaults</span>
-                ) : theme.builtIn ? (
-                  <span>Bundled</span>
-                ) : (
-                  <span>Installed</span>
-                )}
-                {theme.warnings && theme.warnings.length > 0 && (
-                  <Hint label={theme.warnings.map((w) => `${w.key}: ${w.message}`).join("\n")}>
-                    <span className="text-warning">
-                      {theme.warnings.length} warning{theme.warnings.length === 1 ? "" : "s"}
-                    </span>
-                  </Hint>
-                )}
-              </div>
-            </button>
+                <div className="mt-2 flex items-center gap-1 text-3xs uppercase tracking-wide text-muted-foreground">
+                  {theme.id === MINIMAL_ICON_THEME_ID ? (
+                    <span>Atlas defaults</span>
+                  ) : theme.builtIn ? (
+                    <span>Bundled</span>
+                  ) : (
+                    <span>Installed</span>
+                  )}
+                  {theme.warnings && theme.warnings.length > 0 && (
+                    <Hint label={theme.warnings.map((w) => `${w.key}: ${w.message}`).join("\n")}>
+                      <span className="text-warning">
+                        {theme.warnings.length} warning{theme.warnings.length === 1 ? "" : "s"}
+                      </span>
+                    </Hint>
+                  )}
+                </div>
+              </button>
+            </div>
           );
         })}
       </div>
@@ -165,7 +178,7 @@ function RemoveButton({ id, name }: { id: string; name: string }) {
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") event.currentTarget.click();
         }}
-        className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-error group-hover:opacity-100"
+        className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground opacity-0 outline-none transition-opacity hover:text-error group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
       >
         {busy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
       </span>
@@ -234,6 +247,8 @@ function OpenVsxSearch() {
             <button
               type="button"
               onClick={() => {
+                // Retire the search in flight too, so it cannot land after.
+                latest.current++;
                 setQuery("");
                 setState({ phase: "idle" });
               }}

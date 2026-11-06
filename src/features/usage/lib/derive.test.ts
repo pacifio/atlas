@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  EMPTY_AGENT_REGISTRY,
+  resolveAgentMeta,
+  type AgentMetaResolver,
+} from "@/features/agents/lib/agent-identity";
+import {
+  agentDisplay,
   applyFacets,
   byokAsDaily,
   deltaPct,
@@ -16,12 +22,16 @@ import {
 import {
   BYOK_AGENT,
   NO_FACETS,
+  UNKNOWN,
   type DailyBucket,
   type SessionRow,
   type UsageDashboard,
 } from "../types";
 
 const BYOK_PATH = "byok";
+
+/** Agent identity over an empty registry: first-party names, prettified ids. */
+const resolve: AgentMetaResolver = (id) => resolveAgentMeta(id, EMPTY_AGENT_REGISTRY);
 
 function bucket(over: Partial<DailyBucket> = {}): DailyBucket {
   return {
@@ -221,12 +231,38 @@ describe("facetsOf", () => {
       }),
       bucket({ projectPath: "/w/unknown-proj", input: 20, output: 0 }),
     ];
-    const f = facetsOf(rows, data);
+    const f = facetsOf(rows, data, resolve);
     expect(f.projects.map((p) => p.label)).toEqual(["BYOK chat", "unknown-proj", "Atlas"]);
     expect(f.projects[0]).toMatchObject({ value: BYOK_PATH, tokens: 500, rows: 1 });
     expect(f.agents.map((a) => a.label)).toEqual(["BYOK", expect.any(String)]);
     expect(f.agents[0].value).toBe(BYOK_AGENT);
     expect(f.models).toHaveLength(2);
+  });
+});
+
+describe("agentDisplay", () => {
+  it("names the BYOK and unknown buckets itself", () => {
+    expect(agentDisplay(BYOK_AGENT, resolve)).toBe("BYOK");
+    expect(agentDisplay(UNKNOWN, resolve)).toBe("Unknown agent");
+  });
+
+  it("keeps the first-party names", () => {
+    expect(agentDisplay("claude-code", resolve)).toBe("Claude Code");
+    expect(agentDisplay("codex", resolve)).toBe("Codex");
+    expect(agentDisplay("atlas-agent", resolve)).toBe("Atlas");
+  });
+
+  it("names a registry agent through the resolver it is handed", () => {
+    const registry: AgentMetaResolver = (id) =>
+      resolveAgentMeta(id, {
+        catalogById: {},
+        registryEntries: [{ id: "gemini", name: "Gemini CLI", iconDataUrl: null }],
+      });
+    expect(agentDisplay("gemini", registry)).toBe("Gemini CLI");
+    expect(agentDisplay("gemini", resolve)).toBe("Gemini");
+    expect(rankBy([bucket({ agent: "gemini" })], "agent", "tokens", null, registry)[0].label).toBe(
+      "Gemini CLI",
+    );
   });
 });
 
@@ -237,14 +273,14 @@ describe("rankBy", () => {
       bucket({ agent: "b", input: 30, output: 0 }),
       bucket({ agent: "a", input: 20, output: 0 }),
     ];
-    const r = rankBy(rows, "agent", "tokens", null);
+    const r = rankBy(rows, "agent", "tokens", null, resolve);
     expect(r.map((x) => x.key)).toEqual(["a", "b"]);
     expect(r.reduce((s, x) => s + x.share, 0)).toBeCloseTo(1);
     expect(r[0].value).toBe(30);
   });
 
   it("shares are 0 when the metric total is 0", () => {
-    const r = rankBy([bucket({ cost: 0 })], "project", "cost", null);
+    const r = rankBy([bucket({ cost: 0 })], "project", "cost", null, resolve);
     expect(r[0].share).toBe(0);
   });
 });
@@ -260,6 +296,7 @@ describe("series", () => {
       null,
       color,
       "other",
+      resolve,
     );
     expect(s.bucket).toBe("day");
     expect(s.columns.map((c) => c.date)).toEqual([
@@ -285,6 +322,7 @@ describe("series", () => {
       null,
       color,
       "other",
+      resolve,
     );
     expect(s.keys).toHaveLength(MAX_SERIES + 1);
     const other = s.keys[s.keys.length - 1];
@@ -305,6 +343,7 @@ describe("series", () => {
       null,
       color,
       "other",
+      resolve,
     );
     expect(s.keys.some((k) => k.key === OTHER_KEY)).toBe(false);
   });
@@ -319,6 +358,7 @@ describe("series", () => {
       null,
       color,
       "other",
+      resolve,
     );
     expect(s.bucket).toBe("week");
     expect(s.columns[0].date).toBe("2025-12-29"); // Monday of the week containing Jan 1
@@ -328,7 +368,16 @@ describe("series", () => {
   });
 
   it("is empty for an unbounded range with no rows", () => {
-    const s = series([], "agent", "tokens", { from: null, to: "2026-09-17" }, null, color, "other");
+    const s = series(
+      [],
+      "agent",
+      "tokens",
+      { from: null, to: "2026-09-17" },
+      null,
+      color,
+      "other",
+      resolve,
+    );
     expect(s).toEqual({ bucket: "day", keys: [], columns: [], max: 0 });
   });
 });
@@ -389,7 +438,11 @@ describe("efficiency / deltaPct", () => {
 });
 
 describe("insights", () => {
-  const fmt = { fmtCost: (n: number) => `$${n}`, fmtTokens: (n: number) => `${n}` };
+  const fmt = {
+    fmtCost: (n: number) => `$${n}`,
+    fmtTokens: (n: number) => `${n}`,
+    resolveAgent: resolve,
+  };
 
   it("has no cache rule when nothing came from cache", () => {
     const rows = [bucket({ cacheRead: 0 })];

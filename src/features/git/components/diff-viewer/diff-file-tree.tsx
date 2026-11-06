@@ -9,12 +9,11 @@ import {
 } from "lucide-react";
 import type { SessionRoot } from "@/features/chat/lib/session-roots";
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import { FileIcon } from "@/features/icon-theme/components/file-icon";
 import { INDENT_PER_LEVEL, ROW_HEIGHT } from "@/features/explorer/lib/tree-constants";
 import type { DiffFileStat, DiffFileStatus } from "../../lib/git-review-api";
 import { ROOT_SEPARATOR } from "@/features/chat/lib/session-roots";
+import { IconButton, Hint } from "@tryatlas/design";
 
 /**
  * The changed files beside the diff, as a tree with each file's status and
@@ -31,8 +30,8 @@ import { ROOT_SEPARATOR } from "@/features/chat/lib/session-roots";
  * folded into one row (`src/features/git`), as editors do.
  */
 
-const ADDED = "text-[var(--atlas-diff-added-text)]";
-const REMOVED = "text-[var(--atlas-diff-removed-text)]";
+const ADDED = "text-[var(--diff-added-text)]";
+const REMOVED = "text-[var(--diff-removed-text)]";
 const MODIFIED = "text-[var(--atlas-diff-modified-text)]";
 
 const STATUS: Record<DiffFileStatus, { letter: string; className: string; label: string }> = {
@@ -301,12 +300,12 @@ export const DiffFileTree = memo(function DiffFileTree({
                   )}
                   <span className="min-w-0 flex-1 truncate">{group.label}</span>
                   {group.additions > 0 && (
-                    <span className="shrink-0 font-mono text-2xs font-normal text-[var(--atlas-diff-added-text)] tabular-nums">
+                    <span className="shrink-0 font-mono text-2xs font-normal text-[var(--diff-added-text)] tabular-nums">
                       +{group.additions}
                     </span>
                   )}
                   {group.deletions > 0 && (
-                    <span className="shrink-0 font-mono text-2xs font-normal text-[var(--atlas-diff-removed-text)] tabular-nums">
+                    <span className="shrink-0 font-mono text-2xs font-normal text-[var(--diff-removed-text)] tabular-nums">
                       −{group.deletions}
                     </span>
                   )}
@@ -365,12 +364,12 @@ export const DiffFileTree = memo(function DiffFileTree({
                   {row.name}
                 </span>
                 {row.stat.additions !== null && row.stat.additions > 0 && (
-                  <span className="shrink-0 font-mono text-2xs text-[var(--atlas-diff-added-text)] tabular-nums">
+                  <span className="shrink-0 font-mono text-2xs text-[var(--diff-added-text)] tabular-nums">
                     +{row.stat.additions}
                   </span>
                 )}
                 {row.stat.deletions !== null && row.stat.deletions > 0 && (
-                  <span className="shrink-0 font-mono text-2xs text-[var(--atlas-diff-removed-text)] tabular-nums">
+                  <span className="shrink-0 font-mono text-2xs text-[var(--diff-removed-text)] tabular-nums">
                     −{row.stat.deletions}
                   </span>
                 )}

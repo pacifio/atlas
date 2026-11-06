@@ -6,7 +6,6 @@
 // round. An agent that has never run a chat has nothing to show yet.
 
 import { useState } from "react";
-import { Select } from "@/ui/select";
 import { parseConfigOptions } from "@/features/chat/lib/acp-config-options";
 import { loadCachedAcpConfigOptions } from "@/features/chat/lib/acp-config-options-cache";
 import { loadCachedAcpModes } from "@/features/chat/lib/acp-modes-cache";
@@ -19,6 +18,7 @@ import { loadLastModePref, saveLastModePref } from "@/features/chat/lib/last-mod
 import { CLAUDE_PERMISSION_MODES, CLAUDE_PERMISSION_MODE_LABEL } from "@/types/agent";
 import { SettingsGroup, SettingsRow, SettingsSection } from "../layout/settings-layout";
 import type { AgentItem } from "./agent-install";
+import { Select } from "@tryatlas/design";
 
 const AGENT_DEFAULT = "";
 

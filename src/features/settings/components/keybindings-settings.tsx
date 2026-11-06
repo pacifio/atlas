@@ -1,12 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, FileJson, Keyboard, Plus, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
-import { KbdKeys } from "@/ui/kbd";
-import { Segmented } from "@/ui/segmented";
-import { Hint } from "@/ui/tooltip";
 import { type ActionId } from "@/features/keybindings/lib/actions";
 import {
   type Combo,
@@ -38,6 +32,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./layout/settings-layout";
+import { Button, Icon, IconButton, KbdKeys, Segmented, Hint } from "@tryatlas/design";
 
 /**
  * Settings → Keybindings: an ordinary settings page. One card per category,
@@ -298,6 +293,16 @@ function SearchField({
   useEffect(() => {
     if (pressing) inputRef.current?.focus();
   }, [pressing]);
+  // While the field takes a chord, no shortcut in the app may act on it (⌘B
+  // would toggle the sidebar). Held only while it has focus, and dropped on
+  // blur, on leaving press mode and on unmount, so it is never left on.
+  const { setRecording } = useKeybindingsStore.use.actions();
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!pressing || !focused) return;
+    setRecording(true);
+    return () => setRecording(false);
+  }, [pressing, focused, setRecording]);
   const clearable = pressing ? pressed !== null : query !== "";
 
   return (
@@ -317,6 +322,8 @@ function SearchField({
           aria-label="Press a shortcut to find it"
           value=""
           placeholder={pressed ? "" : "Press a shortcut to see what it does…"}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
             e.preventDefault();
             e.stopPropagation();

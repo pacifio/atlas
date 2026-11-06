@@ -17,6 +17,7 @@
 import { Children, type ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
+import { Separator } from "@tryatlas/design";
 
 export function ActionCluster({
   pinned,
@@ -34,8 +35,8 @@ export function ActionCluster({
   return (
     <span
       className={cn(
-        "-my-1 flex shrink-0 items-center gap-0.5 self-center rounded-full border border-border bg-card px-0.5 py-0.5",
-        reveal === "fade" && "transition-opacity duration-150",
+        "-my-1 flex shrink-0 items-center gap-0.5 self-center rounded-full border border-border bg-card p-0.5",
+        reveal === "fade" && "transition-opacity duration-fast",
         pinned
           ? reveal === "fade"
             ? "opacity-100"
@@ -59,7 +60,7 @@ export function ActionCluster({
     >
       {shown.map((child, i) => (
         <span key={i} className="flex items-center">
-          {i > 0 && <span aria-hidden className="mr-0.5 h-3 w-px bg-[var(--border)]" />}
+          {i > 0 && <Separator orientation="vertical" strong aria-hidden className="mr-0.5 h-3" />}
           {child}
         </span>
       ))}

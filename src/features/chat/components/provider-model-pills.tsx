@@ -9,15 +9,12 @@
 //! coding-model catalog).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Popover } from "@base-ui/react/popover";
-import { Check, ChevronDown, Loader2, RefreshCw, Search, Star } from "lucide-react";
-import { ProviderLogo } from "@/components/provider-logo";
 import {
   useModelPricingStore,
   priceFor,
   formatPrice,
 } from "@/features/settings/stores/model-pricing-store";
-import { CHAT_PROVIDERS, providerById } from "@/features/settings/lib/providers";
+import { CHAT_PROVIDERS } from "@/features/settings/lib/providers";
 import { useByokStore } from "@/features/settings/stores/byok-store";
 import { modelchat } from "@/lib/byok/byok-chat";
 import {
@@ -27,8 +24,7 @@ import {
   preferredModels,
 } from "@/features/settings/lib/model-catalog";
 import { loadNativeModelPref } from "../lib/native-model-pref";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
+import { ProviderModelPillsView } from "./views/provider-model-pills-view";
 
 // Curated model-list cache — `modelchat.models(provider)` hits the provider API,
 // so cache the curated list per provider for the app session and dedupe
@@ -59,9 +55,6 @@ function loadModelIds(provider: string): Promise<string[]> {
   modelListInFlight.set(provider, p);
   return p;
 }
-
-const PILL_CLASS =
-  "flex min-w-0 items-center gap-1.5 px-2 h-6.5 rounded-full border border-[var(--border)] bg-[var(--card)] text-2xs leading-none font-medium text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] transition-colors outline-none cursor-pointer";
 
 export function ProviderModelPills({
   provider,
@@ -187,160 +180,40 @@ export function ProviderModelPills({
     };
   }, [viewProvider, models, q]);
 
-  const renderModel = (id: string, starred: boolean) => {
-    const price = formatPrice(priceFor(prices, viewProvider, id), pricingLoading);
-    return (
-      <button
-        key={id}
-        onClick={() => pickModel(id)}
-        className="flex w-full items-center gap-2 px-2.5 h-[26px] text-left text-xs font-mono text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] cursor-pointer outline-none"
-      >
-        {starred && (
-          <Star size={10} className="shrink-0 fill-[var(--primary)] text-[var(--primary)]" />
-        )}
-        <span className="min-w-0 flex-1 truncate">{id}</span>
-        <span
-          className="shrink-0 text-2xs tabular-nums text-[var(--muted-foreground)]"
-          title="Price per 1M tokens (input / output) — models.dev"
-        >
-          {price}
-        </span>
-        {viewProvider === provider && id === model && (
-          <Check size={11} className="shrink-0 text-[var(--foreground)]" />
-        )}
-      </button>
-    );
-  };
+  const providers = useMemo(
+    () => CHAT_PROVIDERS.map((p) => ({ id: p.id, name: p.name, keyed: hasKey(p.id) })),
+    [hasKey],
+  );
+  const onOpenChange = useCallback((o: boolean) => {
+    setOpen(o);
+    if (!o) setQ("");
+  }, []);
+  const pricing = useMemo(
+    () => ({
+      label: (id: string) => formatPrice(priceFor(prices, viewProvider, id), pricingLoading),
+      loading: pricingLoading,
+      onRefresh: () => void refreshPricing(),
+    }),
+    [prices, viewProvider, pricingLoading, refreshPricing],
+  );
 
   return (
-    <Popover.Root
+    <ProviderModelPillsView
+      provider={provider}
+      model={model}
+      viewProvider={viewProvider}
+      providers={providers}
+      hasKey={hasKey(viewProvider)}
+      models={{ pinned, rest }}
+      loadingModels={loadingModels}
+      query={q}
+      onQuery={setQ}
       open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) setQ("");
-      }}
-    >
-      <Popover.Trigger
-        render={
-          <button className={PILL_CLASS} title="Model — click to choose provider + model">
-            <ProviderLogo id={provider || viewProvider} size={13} />
-            {loadingModels && (
-              <Loader2 size={10} className="animate-spin text-[var(--muted-foreground)]" />
-            )}
-            <span className="max-w-[150px] truncate font-mono">
-              {model || (loadingModels ? "Loading…" : "Select model")}
-            </span>
-            <ChevronDown size={11} className="text-[var(--muted-foreground)]" />
-          </button>
-        }
-      />
-      <Popover.Portal>
-        <Popover.Positioner className="z-popover" align="start" side="top" sideOffset={6}>
-          <Popover.Popup className="w-[360px] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--card)] shadow-md">
-            <div className="flex max-h-[420px]">
-              {/* Provider rail — ALWAYS shown, lists every chat provider. Ones
-                  without a key are dimmed; selecting one shows the setup prompt. */}
-              <div className="flex w-9 shrink-0 flex-col items-center gap-1 border-r border-[var(--atlas-border-subtle)] py-1.5 min-h-0 overflow-y-auto hide-scrollbar">
-                {CHAT_PROVIDERS.map((p) => {
-                  const keyed = hasKey(p.id);
-                  return (
-                    <Hint key={p.id} label={`${p.name}${keyed ? "" : " — no API key"}`} side="left">
-                      <button
-                        onClick={() => setViewProvider(p.id)}
-                        className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md transition-all",
-                          p.id === viewProvider
-                            ? "bg-[var(--atlas-element-selected,var(--atlas-element-hover))]"
-                            : keyed
-                              ? "opacity-60 hover:opacity-100 hover:bg-[var(--atlas-element-hover)]"
-                              : "opacity-25 hover:opacity-60 hover:bg-[var(--atlas-element-hover)]",
-                        )}
-                      >
-                        <ProviderLogo id={p.id} size={15} />
-                      </button>
-                    </Hint>
-                  );
-                })}
-              </div>
-
-              <div className="flex min-w-0 flex-1 flex-col min-h-0">
-                {hasKey(viewProvider) ? (
-                  <>
-                    {/* Search + pricing refresh */}
-                    <div className="flex items-center gap-1.5 h-8 border-b border-[var(--atlas-border-subtle)] px-2.5">
-                      <Search size={12} className="shrink-0 text-[var(--muted-foreground)]" />
-                      <input
-                        autoFocus
-                        value={q}
-                        onChange={(e) => setQ(e.target.value)}
-                        placeholder="Search models…"
-                        spellCheck={false}
-                        className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                      />
-                      <Hint label="Refresh model pricing (models.dev)" side="top">
-                        <button
-                          onClick={() => void refreshPricing()}
-                          disabled={pricingLoading}
-                          className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] cursor-pointer disabled:cursor-default"
-                        >
-                          <RefreshCw size={11} className={cn(pricingLoading && "animate-spin")} />
-                        </button>
-                      </Hint>
-                    </div>
-
-                    {/* Model list (name + $/1M) — fills the column height so the
-                        popover has no dead "footer" gap below it. */}
-                    <div className="flex-1 min-h-0 overflow-y-auto hide-scrollbar py-1">
-                      {pinned.length === 0 && rest.length === 0 ? (
-                        <div className="px-2.5 py-2 text-xs text-[var(--muted-foreground)]">
-                          {loadingModels ? "Loading…" : "No models"}
-                        </div>
-                      ) : (
-                        <>
-                          {pinned.length > 0 && (
-                            <>
-                              <div className="px-2.5 pt-1 pb-0.5 text-3xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-                                Recommended for coding
-                              </div>
-                              {pinned.map((id) => renderModel(id, true))}
-                              {rest.length > 0 && (
-                                <div className="my-1 h-px bg-[var(--atlas-border-subtle)]" />
-                              )}
-                            </>
-                          )}
-                          {rest.map((id) => renderModel(id, false))}
-                        </>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  /* No key for the browsed provider — prompt to set one up. */
-                  <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
-                    <ProviderLogo id={viewProvider} size={22} />
-                    <div className="text-sm text-[var(--secondary-foreground)]">
-                      No API key for{" "}
-                      <span className="text-[var(--foreground)]">
-                        {providerById(viewProvider)?.name ?? viewProvider}
-                      </span>
-                    </div>
-                    <button
-                      onClick={openApiKeys}
-                      className="rounded-md border border-[var(--border)] bg-[var(--background)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--atlas-element-hover)] transition-colors cursor-pointer"
-                    >
-                      Set up key in Settings
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* The "Compress Tokens" toggle stood here. It drove the old native
-                runtime's RTK tool-output compressor, which the ported engine has
-                no counterpart for (#54, D8) — so the control is gone rather than
-                left switching nothing. */}
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+      onOpenChange={onOpenChange}
+      onBrowse={setViewProvider}
+      onPick={pickModel}
+      onSetUpKey={openApiKeys}
+      pricing={pricing}
+    />
   );
 }

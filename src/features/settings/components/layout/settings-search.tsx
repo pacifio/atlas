@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { Search, X } from "lucide-react";
-import { Icon } from "@/ui/icon";
-import { IconButton } from "@/ui/icon-button";
+import { Icon, IconButton } from "@tryatlas/design";
 
 /**
  * The search field a settings page puts over a long list (API keys, skills),

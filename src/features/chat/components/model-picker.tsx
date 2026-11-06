@@ -34,7 +34,7 @@ import {
   type RefObject,
 } from "react";
 import { Check, ChevronRight, Pin, Plus, Search } from "lucide-react";
-import { ProviderLogo } from "@/components/provider-logo";
+import { ProviderLogo } from "@/components/brand-marks";
 import { AgentGlyph } from "@/features/artifacts/components/agent-glyph";
 import type { ActionId } from "@/features/keybindings/lib/actions";
 import { displayLabel } from "@/features/keybindings/lib/combo";
@@ -46,13 +46,11 @@ import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-s
 import { cn } from "@/lib/utils";
 import { catalogEntry } from "@/features/agents/lib/agent-meta";
 import { arrangeModels } from "@/features/agents/lib/agent-models";
-import { Button } from "@/ui/button";
-import { Kbd } from "@/ui/kbd";
-import { Hint } from "@/ui/tooltip";
 import type { SessionModeInfo } from "@/types/agents";
 import { modelLabel } from "../lib/model-label";
 import { favoriteKey, useModelFavorites } from "../lib/model-favorites";
 import { providerDisplay } from "../lib/model-provider";
+import { Button, Kbd, Hint } from "@tryatlas/design";
 
 const FAVORITES = "favorites";
 const ADD = "add";

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,7 +12,7 @@ import { fileURLToPath } from "node:url";
  * generate — a typo like `rounded-huge`, or a plugin utility the repo does not
  * ship (`animate-in` was one: a dialog's fade-in that never ran). It knows
  * Tailwind and `@utility`, but not the plain CSS classes in Atlas's own
- * stylesheets (`.atlas-tab`, `.prose-chat`, …), so those are allowlisted.
+ * stylesheets (`.atlas-pill-in`, `.atlas-prose-wrap`, …), so those are allowlisted.
  *
  * WHY each name is listed exactly rather than as `atlas-*`: a wildcard is the
  * one shape that hides the bug the rule exists for. `atlas-promt` matches
@@ -23,7 +24,8 @@ import { fileURLToPath } from "node:url";
  * waved through. That is what this suite closes. Every allowlisted name must
  * be one of:
  *
- *   - defined as a selector in a stylesheet under `src/` (or an `@utility`);
+ *   - defined as a selector in a stylesheet under `src/` or in
+ *     `@tryatlas/design`'s, which `globals.css` imports (or as an `@utility`);
  *   - a JS hook, matched by `closest()`/`querySelector()` rather than styled,
  *     and still referenced that way in `src/`;
  *   - a class a library itself styles or reads (listed below, with why).
@@ -35,16 +37,20 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(REPO_ROOT, "src");
+/** The design package's stylesheets, which `globals.css` imports. */
+const PACKAGE_STYLES = path.join(
+  path.dirname(createRequire(import.meta.url).resolve("@tryatlas/design/package.json")),
+  "src",
+  "styles",
+);
 
 /** Classes matched from script, never styled. Each must still be queried. */
-const JS_HOOKS = ["atlas-cmd-suggest", "atlas-mention-picker", "atlas-slash-picker"];
+const JS_HOOKS = ["atlas-mention-picker", "atlas-slash-picker"];
 
 /** Classes a dependency styles or reads; no Atlas stylesheet defines them. */
 const LIBRARY_CLASSES: Record<string, string> = {
   nodrag: "@xyflow/react: an element inside a node that must not start a drag",
   hljs: "highlight.js: the root its themes are scoped under",
-  lucide: "lucide: the class every lucide-react icon carries, mirrored by a hand-drawn one",
-  "lucide-github": "lucide: the per-icon class lucide-react adds, mirrored likewise",
 };
 
 function walk(dir: string, exts: string[]): string[] {
@@ -67,7 +73,7 @@ function readAllowlist(): string[] {
 
 function definedClasses(): Set<string> {
   const defined = new Set<string>();
-  for (const file of walk(SRC, [".css"])) {
+  for (const file of [...walk(SRC, [".css"]), ...walk(PACKAGE_STYLES, [".css"])]) {
     const css = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     for (const m of css.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) defined.add(m[1]);
     for (const m of css.matchAll(/@utility\s+([\w-]+)/g)) defined.add(m[1]);
@@ -82,7 +88,7 @@ describe("shadcn-lint allowlist", () => {
 
   it("parses a plausible allowlist and stylesheet set", () => {
     // Floors: a parse that stops matching fails here rather than passing vacuously.
-    expect(allow.length).toBeGreaterThan(40);
+    expect(allow.length).toBeGreaterThan(30);
     expect(defined.size).toBeGreaterThan(200);
   });
 
@@ -96,7 +102,7 @@ describe("shadcn-lint allowlist", () => {
     );
     expect(
       unexplained,
-      "allowlisted but defined in no stylesheet under src/ — remove it from .oxlintrc.json",
+      "allowlisted but defined in no stylesheet under src/ or the package — remove it from .oxlintrc.json",
     ).toEqual([]);
   });
 

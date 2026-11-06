@@ -75,3 +75,11 @@ diff.removed.text	Removed diff text, and the -N line statistic. Source: palette.
 diff.context.background	Unchanged diff context. Source: base.background → Atlas default.
 agent.chip.foreground	Agent identity chip text. Source: base.foreground → Atlas default.
 agent.chip.background	Agent identity chip fill. Source: base.foreground → Atlas default. Transform: alpha 0.06.
+hue.red	The red identity hue: labels, project dots, meters. Source: palette.red → Atlas default.
+hue.orange	The orange identity hue: labels, project dots, meters. Source: palette.orange → Atlas default.
+hue.yellow	The yellow identity hue: labels, project dots, meters. Source: palette.yellow → Atlas default.
+hue.green	The green identity hue: labels, project dots, meters. Source: palette.green → Atlas default.
+hue.cyan	The cyan identity hue: labels, project dots, meters. Source: palette.cyan → Atlas default.
+hue.blue	The blue identity hue: labels, project dots, meters. Source: palette.blue → Atlas default.
+hue.purple	The purple identity hue: labels, project dots, meters. Source: palette.purple → Atlas default.
+hue.pink	The pink identity hue: labels, project dots, meters. Source: palette.pink → Atlas default.

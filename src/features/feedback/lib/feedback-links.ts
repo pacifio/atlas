@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { FeedbackCategory } from "./feedback-api";
 
 export { DISCORD_URL } from "@/lib/atlas-links";
-const ISSUE_BASE = "https://github.com/pacifio/atlas/issues/new";
+const ISSUE_BASE = "https://github.com/tryatlas/atlas/issues/new";
 
 const PREFIX: Record<FeedbackCategory, string> = {
   issue: "[Bug]",

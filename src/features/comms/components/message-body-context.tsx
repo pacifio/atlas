@@ -16,8 +16,11 @@ export interface MentionDirectory {
   members: Map<string, OrgMemberProfile>;
   /** The current user — a mention of them is styled as addressed to you. */
   me: string;
+  /** Hand a link to the system browser. The container owns the opener, so the
+   *  lazy pipeline imports nothing from `@tauri-apps/*`. */
+  onOpenLink: (url: string) => void;
 }
 
-const EMPTY: MentionDirectory = { members: new Map(), me: "" };
+const EMPTY: MentionDirectory = { members: new Map(), me: "", onOpenLink: () => {} };
 
 export const MentionContext = createContext<MentionDirectory>(EMPTY);

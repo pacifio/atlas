@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { Menu as DropdownMenu } from "@base-ui/react/menu";
-import { Check, ChevronDown, Search, X } from "lucide-react";
+import { ChevronDown, Search, X } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  Segmented,
+} from "@tryatlas/design";
 import { cn } from "@/lib/utils";
 import { fmtTokens } from "@/features/monitor/lib/usage-format";
 import type { Facets, GroupBy, Metric } from "../types";
 import type { FacetOption } from "../lib/derive";
-import { Segmented } from "./segmented";
 
 type Axis = keyof Facets;
 
@@ -82,18 +87,33 @@ export function FilterBar({
         <button
           type="button"
           onClick={onClear}
-          className="flex h-6 items-center gap-1 rounded-full px-2 text-2xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]"
+          className="flex h-6 items-center gap-1 rounded-full px-2 text-2xs text-muted-foreground transition-colors hover:bg-element-hover hover:text-foreground"
         >
           <X size={10} /> Clear
         </button>
       )}
       <div className="flex-1" />
       {/* No "GROUP" / "METRIC" labels: each track carries its name as its
-          accessible name and its tooltip, and the chart caption below spells
-          out both choices ("Tokens · by day · per project"), so shouting them
-          here said nothing the page did not already say. */}
-      <Segmented label="Group by" value={groupBy} options={GROUPS} onChange={onGroupBy} />
-      <Segmented label="Metric" value={metric} options={METRICS} onChange={onMetric} />
+          accessible name, and the chart caption below spells out both
+          choices ("Tokens · by day · per project"), so shouting them here
+          said nothing the page did not already say. `size="sm"` puts the
+          track at the facet pills' 26px; the quieter fill (no card, no
+          border weight) still says a segment flips a state while a pill
+          opens a menu. */}
+      <Segmented
+        size="sm"
+        aria-label="Group by"
+        value={groupBy}
+        options={GROUPS}
+        onValueChange={onGroupBy}
+      />
+      <Segmented
+        size="sm"
+        aria-label="Metric"
+        value={metric}
+        options={METRICS}
+        onValueChange={onMetric}
+      />
     </div>
   );
 }
@@ -126,85 +146,85 @@ function FacetPill({
   const on = selected.length > 0;
 
   return (
-    <DropdownMenu.Root onOpenChange={(open) => !open && setQuery("")}>
-      <DropdownMenu.Trigger
+    <DropdownMenu onOpenChange={(open) => !open && setQuery("")}>
+      <DropdownMenuTrigger
         render={
-          <button
-            type="button"
-            disabled={options.length === 0}
-            className={cn(
-              "flex h-control-md items-center rounded-full border px-2 text-2xs font-medium leading-none transition-colors outline-none disabled:cursor-not-allowed disabled:opacity-50",
-              on
-                ? "border-[var(--atlas-border-strong)] bg-[var(--atlas-element-selected)] text-[var(--foreground)]"
-                : "border-[var(--border)] bg-[var(--card)] text-[var(--secondary-foreground)] hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)]",
-            )}
-          >
+          <FacetButton on={on} disabled={options.length === 0}>
             <span className="max-w-[160px] truncate">{label}</span>
             {selected.length > 1 && (
-              <span className="ml-1 rounded-full bg-[var(--atlas-element-active)] px-1 text-3xs tabular-nums">
+              <span className="ml-1 rounded-full bg-element-active px-1 text-3xs tabular-nums">
                 {selected.length}
               </span>
             )}
-            <ChevronDown size={10} className="ml-1 shrink-0 text-[var(--muted-foreground)]" />
-          </button>
+            <ChevronDown size={10} className="ml-1 shrink-0 text-muted-foreground" />
+          </FacetButton>
         }
       />
-      <DropdownMenu.Portal>
-        {/* z-index belongs to the Positioner — the Popup is statically
-            positioned inside it. `finalFocus={false}` is Radix's
-            `onCloseAutoFocus` preventDefault: closing the checklist must not
-            yank focus back to the pill. */}
-        <DropdownMenu.Positioner className="z-popover" align="start" sideOffset={4}>
-          <DropdownMenu.Popup
-            finalFocus={false}
-            className="w-[260px] rounded-lg border border-[var(--border)] bg-popover py-1 text-xs text-[var(--secondary-foreground)] shadow-md"
-          >
-            {options.length > SEARCH_ABOVE && (
-              <div className="mx-1.5 mb-1 flex h-control-md items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--background)] px-2">
-                <Search size={11} className="shrink-0 text-[var(--muted-foreground)]" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    // Keep keys from the popup's typeahead and arrow nav, but let Escape
-                    // bubble to the dismiss handler so it still closes the popup.
-                    if (e.key !== "Escape") e.stopPropagation();
-                  }}
-                  placeholder={`Filter ${oneLabel}s`}
-                  className="w-full bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]"
-                />
-              </div>
-            )}
-            <div className="max-h-[280px] overflow-y-auto hide-scrollbar">
-              {shown.length === 0 && (
-                <div className="px-3 py-2 text-2xs text-[var(--muted-foreground)]">No matches</div>
-              )}
-              {/* No `closeOnClick`: Base UI's checkbox items keep the menu open
-                  by default, which is what Radix's `onSelect` preventDefault
-                  was doing here. `data-checked` is Base UI's spelling of
-                  `data-[state=checked]`. */}
-              {shown.map((o) => (
-                <DropdownMenu.CheckboxItem
-                  key={o.value}
-                  checked={sel.has(o.value)}
-                  onCheckedChange={() => onToggle(axis, o.value)}
-                  className="flex h-control-md cursor-default items-center gap-2 px-3 outline-none hover:bg-[var(--atlas-element-hover)] hover:text-[var(--foreground)] data-checked:text-[var(--foreground)]"
-                >
-                  <span className="flex size-3.5 shrink-0 items-center justify-center rounded border border-[var(--atlas-border-strong)]">
-                    <DropdownMenu.CheckboxItemIndicator>
-                      <Check size={10} />
-                    </DropdownMenu.CheckboxItemIndicator>
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
-                  <span className="shrink-0 text-2xs tabular-nums text-[var(--muted-foreground)]">
-                    {fmtTokens(o.tokens)}
-                  </span>
-                </DropdownMenu.CheckboxItem>
-              ))}
-            </div>
-          </DropdownMenu.Popup>
-        </DropdownMenu.Positioner>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+      {/* `finalFocus={false}` is Radix's `onCloseAutoFocus` preventDefault:
+          closing the checklist must not yank focus back to the pill. */}
+      <DropdownMenuContent align="start" sideOffset={4} finalFocus={false} className="w-[260px]">
+        {options.length > SEARCH_ABOVE && (
+          <div className="m-1 flex h-control-md items-center gap-1.5 rounded-md border border-border bg-background px-2">
+            <Search size={11} className="shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                // Keep keys from the popup's typeahead and arrow nav, but let Escape
+                // bubble to the dismiss handler so it still closes the popup.
+                if (e.key !== "Escape") e.stopPropagation();
+              }}
+              placeholder={`Filter ${oneLabel}s`}
+              className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+        )}
+        <div className="hide-scrollbar max-h-[280px] overflow-y-auto">
+          {shown.length === 0 && (
+            <div className="px-3 py-2 text-2xs text-muted-foreground">No matches</div>
+          )}
+          {/* No `closeOnClick`: Base UI's checkbox items keep the menu open
+              by default, which is what Radix's `onSelect` preventDefault was
+              doing here. The item draws its own check. */}
+          {shown.map((o) => (
+            <DropdownMenuCheckboxItem
+              key={o.value}
+              checked={sel.has(o.value)}
+              onCheckedChange={() => onToggle(axis, o.value)}
+            >
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
+                {fmtTokens(o.tokens)}
+              </span>
+            </DropdownMenuCheckboxItem>
+          ))}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * A facet pill: raised on the card fill at rest, the selected fill once a
+ * facet is set. A component of its own so the menu trigger renders it whole
+ * rather than restyling the trigger at the call site.
+ */
+function FacetButton({
+  on,
+  className,
+  ...props
+}: React.ComponentProps<"button"> & { on: boolean }) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={cn(
+        "flex h-control-md items-center rounded-full border px-2 text-2xs font-medium leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+        on
+          ? "border-border-strong bg-element-selected text-foreground"
+          : "border-border bg-card text-secondary-foreground hover:bg-element-hover hover:text-foreground",
+        className,
+      )}
+    />
   );
 }

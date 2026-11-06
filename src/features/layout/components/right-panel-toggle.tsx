@@ -12,10 +12,8 @@
 
 import { PanelRight } from "lucide-react";
 
-import { HintItem } from "@/ui/hint-group";
-import { IconButton } from "@/ui/icon-button";
-
 import { useLayoutStore } from "../stores/layout-store";
+import { HintItem, IconButton } from "@tryatlas/design";
 
 type LayoutSnapshot = ReturnType<typeof useLayoutStore.getState>;
 

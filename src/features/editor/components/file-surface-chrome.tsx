@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 import { FolderTree, type LucideIcon } from "lucide-react";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 import { useFileTabFrame } from "@/features/explorer/lib/file-tab-frame-context";
+import { IconButton, Hint } from "@tryatlas/design";
 
 /**
  * The file tab's header band, under its tab: the file's breadcrumbs, then its

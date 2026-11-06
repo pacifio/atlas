@@ -1,8 +1,14 @@
 import { useState } from "react";
-import { Menu as DropdownMenu } from "@base-ui/react/menu";
-import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, Download, FileText, Globe, Loader2, Server } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import {
+  exportKnowledgeNoteHtml,
+  exportKnowledgeNoteMd,
+  exportKnowledgeServer,
+  exportKnowledgeWorkspaceHtml,
+  exportKnowledgeWorkspaceMd,
+  revealItemInDir,
+} from "../lib/knowledge-api";
+import { EditorFooterView, type ExportKey } from "./views/editor-footer-view";
 
 interface EditorFooterProps {
   wordCount: number;
@@ -11,15 +17,10 @@ interface EditorFooterProps {
   entryId: string | null;
 }
 
-const READ_WPM = 240;
-
-type ExportKey = "note-md" | "note-html" | "project-md" | "project-html" | "server";
-
+/** The note footer's export runs; everything it draws is `EditorFooterView`. */
 export function EditorFooter({ wordCount, charCount, projectPath, entryId }: EditorFooterProps) {
-  const readMinutes = Math.max(1, Math.round(wordCount / READ_WPM));
-  // Which export is in-flight, if any. The pill renders a spinner +
-  // disables the trigger while an export runs; the dropdown itself is
-  // unmounted because the trigger is disabled.
+  // Which export is in-flight, if any. The view renders a spinner and
+  // disables the trigger while an export runs.
   const [busy, setBusy] = useState<ExportKey | null>(null);
 
   const run = async (key: ExportKey, fn: () => Promise<void>) => {
@@ -29,7 +30,7 @@ export function EditorFooter({ wordCount, charCount, projectPath, entryId }: Edi
       await fn();
     } catch (err) {
       console.error(`[export:${key}] failed`, err);
-      window.alert(`Export failed:\n\n${String(err)}`);
+      toast.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setBusy(null);
     }
@@ -54,203 +55,48 @@ export function EditorFooter({ wordCount, charCount, projectPath, entryId }: Edi
     return (chosen as string | null) ?? null;
   };
 
-  /** Tolerant reveal — different plugin-opener versions disagree on the
-   *  arg shape; the JS wrapper hits a "missing required key paths"
-   *  validator error on some installs. Try both via direct invoke and
-   *  swallow failure silently. */
-  const revealInFinder = async (path: string) => {
-    try {
-      await invoke("plugin:opener|reveal_item_in_dir", { paths: [path] });
-    } catch {
-      try {
-        await invoke("plugin:opener|reveal_item_in_dir", { path });
-      } catch {
-        // Best-effort. Caller already has the path; reveal is a nicety.
-      }
-    }
-  };
-
-  const handleExportNoteMd = () =>
-    run("note-md", async () => {
+  const exports: Record<ExportKey, () => Promise<void>> = {
+    "note-md": async () => {
       if (!entryId) return;
       const target = await pickSavePath(`${entryId.split("/").pop()}.md`, "md");
       if (!target) return;
-      await invoke("knowledge_export_note_md", {
-        projectPath,
-        entryId,
-        targetPath: target,
-      });
-    });
-
-  const handleExportNoteHtml = () =>
-    run("note-html", async () => {
+      await exportKnowledgeNoteMd(projectPath, entryId, target);
+    },
+    "note-html": async () => {
       if (!entryId) return;
       const target = await pickSavePath(`${entryId.split("/").pop()}.html`, "html");
       if (!target) return;
-      await invoke("knowledge_export_note_html", {
-        projectPath,
-        entryId,
-        targetPath: target,
-      });
-    });
-
-  const handleExportProjectMd = () =>
-    run("project-md", async () => {
+      await exportKnowledgeNoteHtml(projectPath, entryId, target);
+    },
+    "project-md": async () => {
       const target = await pickSavePath("knowledge.md", "md");
       if (!target) return;
-      await invoke("knowledge_export_workspace_md", {
-        projectPath,
-        targetPath: target,
-      });
-    });
-
-  const handleExportProjectHtml = () =>
-    run("project-html", async () => {
+      await exportKnowledgeWorkspaceMd(projectPath, target);
+    },
+    "project-html": async () => {
       const target = await pickDirectory("knowledge-site");
       if (!target) return;
-      await invoke("knowledge_export_workspace_html", {
-        projectPath,
-        targetDir: target,
-      });
-    });
-
-  const handleExportServer = () =>
-    run("server", async () => {
+      await exportKnowledgeWorkspaceHtml(projectPath, target);
+    },
+    server: async () => {
       const { save } = await import("@tauri-apps/plugin-dialog");
       const target = (await save({
         defaultPath: "atlas-kb-server",
         title: "Export Knowledge Server (cargo build, ~1 minute)",
       })) as string | null;
       if (!target) return;
-      const result = await invoke<{ binaryPath: string; noteCount: number }>(
-        "knowledge_export_server",
-        { projectPath, targetPath: target },
-      );
-      await revealInFinder(result.binaryPath);
-    });
-
-  const hasNote = !!entryId;
-  const isBusy = busy !== null;
-  const busyLabel = busy === "server" ? "Building…" : busy ? "Exporting…" : null;
+      const result = await exportKnowledgeServer(projectPath, target);
+      await revealItemInDir(result.binaryPath);
+    },
+  };
 
   return (
-    <div
-      className="flex items-center shrink-0 border-t border-border-subtle text-muted-foreground text-2xs"
-      style={{
-        height: 24,
-        gap: 14,
-        padding: "0 14px",
-        background: "var(--atlas-panel-background)",
-      }}
-    >
-      <span>
-        <span className="mono tnum">{wordCount.toLocaleString("en-US")}</span> words
-      </span>
-      <span>
-        <span className="mono tnum">{charCount.toLocaleString("en-US")}</span> chars
-      </span>
-      <span>
-        <span className="mono">~{readMinutes}m</span> read
-      </span>
-      <span className="flex-1" />
-
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger
-          render={
-            <button
-              disabled={isBusy}
-              className={cn(
-                "inline-flex items-center gap-1 h-5 px-2 rounded-full",
-                "border border-border bg-card text-[var(--foreground)]",
-                "text-2xs font-medium leading-none cursor-pointer",
-                "hover:bg-element-hover transition-colors",
-                "shadow-sm",
-                isBusy && "opacity-80 cursor-wait",
-              )}
-              title={busyLabel ?? "Export"}
-            >
-              {isBusy ? (
-                <>
-                  <Loader2 size={10} className="animate-spin" />
-                  {busyLabel}
-                </>
-              ) : (
-                <>
-                  <Download size={10} />
-                  Export
-                  <ChevronDown size={10} className="opacity-70" />
-                </>
-              )}
-            </button>
-          }
-        />
-        <DropdownMenu.Portal>
-          <DropdownMenu.Positioner className="z-popover" align="end" sideOffset={6}>
-            <DropdownMenu.Popup
-              className={cn(
-                "min-w-[200px] rounded-md p-0.5",
-                "bg-popover border border-border",
-                "shadow-md",
-                "text-foreground",
-              )}
-            >
-              <ExportMenuItem
-                icon={FileText}
-                label="Export note as .md"
-                disabled={!hasNote}
-                onSelect={handleExportNoteMd}
-              />
-              <ExportMenuItem
-                icon={Globe}
-                label="Export note as .html"
-                disabled={!hasNote}
-                onSelect={handleExportNoteHtml}
-              />
-              <DropdownMenu.Separator className="h-px bg-border my-0.5" />
-              <ExportMenuItem
-                icon={FileText}
-                label="Export project as .md"
-                onSelect={handleExportProjectMd}
-              />
-              <ExportMenuItem
-                icon={Globe}
-                label="Export project as .html"
-                onSelect={handleExportProjectHtml}
-              />
-              <DropdownMenu.Separator className="h-px bg-border my-0.5" />
-              <ExportMenuItem icon={Server} label="Export server" onSelect={handleExportServer} />
-            </DropdownMenu.Popup>
-          </DropdownMenu.Positioner>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-    </div>
-  );
-}
-
-function ExportMenuItem({
-  icon: Icon,
-  label,
-  onSelect,
-  disabled,
-}: {
-  icon: React.ElementType;
-  label: string;
-  onSelect: () => void | Promise<void>;
-  disabled?: boolean;
-}) {
-  return (
-    <DropdownMenu.Item
-      disabled={disabled}
-      onClick={() => void onSelect()}
-      className={cn(
-        "flex items-center gap-2 rounded px-2 py-1 outline-none cursor-pointer",
-        "text-sm text-secondary-foreground",
-        "focus:bg-element-hover focus:text-foreground",
-        "data-[disabled]:pointer-events-none data-[disabled]:opacity-40",
-      )}
-    >
-      <Icon size={11} className="text-muted-foreground" />
-      {label}
-    </DropdownMenu.Item>
+    <EditorFooterView
+      wordCount={wordCount}
+      charCount={charCount}
+      hasNote={!!entryId}
+      busy={busy}
+      onExport={(key) => void run(key, exports[key])}
+    />
   );
 }

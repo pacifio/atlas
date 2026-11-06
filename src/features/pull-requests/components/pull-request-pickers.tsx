@@ -8,10 +8,6 @@ import { toast } from "sonner";
 import { Check, Tag, UserPlus, type LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { IconButton } from "@/ui/icon-button";
-import { Input } from "@/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-import { Hint } from "@/ui/tooltip";
 
 import { classifyPrError, prErrorMessage } from "../lib/pr-errors";
 import {
@@ -25,6 +21,7 @@ import { readableFailure } from "../lib/use-pull-request-actions";
 import { usePullRequestScope } from "./pull-request-context";
 import { ActorLabel, labelColor } from "./pull-request-presentation";
 import { PeopleGhost } from "./pull-request-states";
+import { IconButton, Input, Popover, PopoverContent, PopoverTrigger, Hint } from "@tryatlas/design";
 
 function CandidatePicker<T>({
   icon,

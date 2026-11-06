@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { resetTooltipTiming, TOOLTIP_OPEN_DELAY, TOOLTIP_WARM_WINDOW } from "@/ui/tooltip-timing";
 import { TitlebarDock, type DockItem } from "./titlebar-dock";
+import { resetTooltipTiming, TOOLTIP_OPEN_DELAY, TOOLTIP_WARM_WINDOW } from "@tryatlas/design";
 
 /**
  * happy-dom reports every rect as zero, and the whole tooltip is arithmetic

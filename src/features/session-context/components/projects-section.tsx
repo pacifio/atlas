@@ -53,16 +53,6 @@ import { useProjectGitStore } from "@/features/projects/stores/project-git-store
 import { useProjectStore } from "@/features/projects/stores/project-store";
 import { basename } from "@/lib/paths";
 import { timeAgo } from "@/lib/time-ago";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { IconButton } from "@/ui/icon-button";
-import { Hint } from "@/ui/tooltip";
 
 import { revealProject } from "../lib/workspace-actions";
 import {
@@ -74,6 +64,16 @@ import {
   RowMeta,
 } from "./details-rows";
 import { FILE_MANAGER } from "./workspace-section";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  IconButton,
+  Hint,
+} from "@tryatlas/design";
 
 const SOURCE_LABEL: Record<AttachSource, string> = {
   mention: "Attached by an @-mention",

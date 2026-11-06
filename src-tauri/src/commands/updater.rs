@@ -6,8 +6,9 @@
 //! implementation of the same staged design — `updater_macos.rs` mounts,
 //! verifies and swaps an `.app` bundle; `updater_windows.rs` hands the MSI to
 //! Windows Installer after the app quits — over one shared background
-//! download engine (`updater_download.rs`). Every other platform gets
-//! `updater_stub.rs`, a no-op carrying the same signatures.
+//! download engine (`updater_download.rs`). `updater_linux.rs` only announces
+//! a release, since Linux updates belong to the package manager. Every other
+//! platform gets `updater_stub.rs`, a no-op carrying the same signatures.
 //!
 //! The four `#[tauri::command]` verbs and the DTOs they return are declared
 //! **here, once**, per the "IPC verbs grouped into a single
@@ -37,7 +38,11 @@ mod imp;
 #[path = "updater_windows.rs"]
 mod imp;
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+#[path = "updater_linux.rs"]
+mod imp;
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 #[path = "updater_stub.rs"]
 mod imp;
 

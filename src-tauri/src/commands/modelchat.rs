@@ -509,6 +509,9 @@ async fn fetch_anthropic_models(base: &str, key: &str) -> Result<Vec<String>, St
 mod tests {
     use super::*;
 
+    /// Each request the fake server saw: its path and JSON body.
+    type SeenRequests = Arc<Mutex<Vec<(String, Value)>>>;
+
     #[test]
     fn test_minimax_regions() {
         for (provider, endpoint) in [
@@ -530,12 +533,12 @@ mod tests {
     async fn test_minimax_stream_request_preserves_model_and_history() {
         use axum::{extract::State, http::Uri, routing::post, Json, Router};
 
-        let requests = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
+        let requests: SeenRequests = Arc::default();
         let router = Router::new()
             .route(
                 "/{*path}",
                 post(
-                    |State(requests): State<Arc<Mutex<Vec<(String, Value)>>>>,
+                    |State(requests): State<SeenRequests>,
                      uri: Uri,
                      Json(body): Json<Value>| async move {
                         requests.lock().push((uri.path().to_string(), body));

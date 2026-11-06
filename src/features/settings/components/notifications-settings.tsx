@@ -1,8 +1,6 @@
 import { useSettingsStore } from "@/features/settings/stores/settings-store";
 import { TIER_ORDER, TIER_SETTINGS, kindsInTier } from "@/features/notifications/lib/prefs";
 import type { NotificationTier } from "@/features/notifications/lib/catalog";
-import { Select } from "@/ui/select";
-import { Switch } from "@/ui/switch";
 import {
   SettingsGroup,
   SettingsPage,
@@ -10,6 +8,7 @@ import {
   SettingsSection,
 } from "./layout/settings-layout";
 import { SettingSwitch } from "./layout/setting-controls";
+import { Select, Switch } from "@tryatlas/design";
 
 const DURATION_OPTIONS: { value: number; label: string }[] = [
   { value: 0, label: "Always" },

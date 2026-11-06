@@ -1,8 +1,8 @@
 import { startTransition, useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AppLayout } from "@/features/layout/components/app-layout";
-import { TooltipProvider } from "@/ui/tooltip";
 import { CommandPalette } from "@/features/command-palette/components/command-palette";
+import { AskAgentHost } from "@/features/ask-agent/components/ask-agent-host";
 import { useCommandPaletteStore } from "@/features/command-palette/stores/command-palette-store";
 import { NewTabPalette } from "@/components/new-tab-palette";
 import { LayoutSwitcher } from "@/features/layout/components/layout-switcher";
@@ -12,7 +12,9 @@ import {
   useKeybindingsStore,
   watchKeybindingsOnFocus,
 } from "@/features/keybindings/stores/keybindings-store";
-import { KeymapOnboarding } from "@/features/keybindings/components/keymap-onboarding";
+import { FirstRunDialog } from "@/features/app/components/first-run-dialog";
+import { TipHost } from "@/features/tips/components/tip-host";
+import { TipTriggers } from "@/features/tips/components/tip-triggers";
 import { useNativeMenu } from "@/features/menu/lib/use-native-menu";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { OPEN_SURFACE_MENU_EVENT } from "@/features/layout/lib/surfaces";
@@ -127,7 +129,10 @@ import {
   listenUpdateApplied,
   listenUpdateError,
   listenUpdateChecking,
+  listenUpdateAvailable,
 } from "@/features/updater/lib/updater-api";
+import { announceLinuxRelease } from "@/features/updater/lib/linux-release-notice";
+import { isLinux } from "@/lib/platform";
 import { Toaster, toast } from "sonner";
 import { TOAST_ICONS } from "@/components/toast-icons";
 import { agentMeta } from "@/features/agents/lib/agent-meta";
@@ -161,6 +166,7 @@ import { toggleTeamChat } from "@/features/layout/lib/team-chat";
 import { toggleDestination } from "@/features/layout/lib/destinations";
 import { toggleAgentPanel } from "@/features/layout/lib/org-agent";
 import { startOrgAgentBridge } from "@/features/org-agent/lib/org-agent-bridge";
+import { TooltipProvider } from "@tryatlas/design";
 
 // Developer console toggle for session holds (Universal RC groundwork).
 if (isDev) installDevSessionHold();
@@ -306,6 +312,9 @@ export function App() {
       listenUpdateError((e) => a.setError(e.message)),
       listenUpdateChecking((e) => a.setChecking(e.checking)),
     ];
+    // Linux never downloads an update, so it has no ready/restart phase:
+    // announcing the release is all there is (`updater_linux.rs`).
+    if (isLinux) offs.push(listenUpdateAvailable(announceLinuxRelease));
     // Hydrate from the current backend state (e.g. staged before this mount).
     // Show the titlebar badge but don't pop the modal on launch — the live
     // `atlas:update-ready` event opens it; hydration is badge-only.
@@ -1485,6 +1494,7 @@ export function App() {
         <AppLayout />
       </div>
       <CommandPalette />
+      <AskAgentHost />
       <NewTabPalette open={newTabPaletteOpen} onOpenChange={setNewTabPaletteOpen} />
       <LayoutSwitcher open={layoutSwitcherOpen} onOpenChange={setLayoutSwitcherOpen} />
       <SearchOverlay open={searchOpen} onOpenChange={setSearchOpen} />
@@ -1499,7 +1509,9 @@ export function App() {
       <NotificationPanel />
       <FeedbackPanel />
       <UpdateAvailableModal />
-      <KeymapOnboarding />
+      <FirstRunDialog />
+      <TipHost />
+      <TipTriggers />
       <ConnectDialog />
       <LoadingOrganisationOverlay />
       <StopAgentsDialog />

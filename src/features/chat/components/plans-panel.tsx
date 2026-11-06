@@ -1,20 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { ClipboardList, ChevronRight, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Hint } from "@/ui/tooltip";
-import { Markdown } from "@/lib/markdown";
+import { useCallback, useEffect, useState } from "react";
+import { ClipboardList } from "lucide-react";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import { usePaneTopInset } from "@/features/layout/lib/pane-top-inset";
 import { useAppStore } from "@/features/app/stores/app-store";
-import { type PlanRecord, formatPlanTimestamp, planTimeAgo } from "../lib/plans";
+import type { PlanRecord } from "../lib/plans";
+import { loadPlans } from "../lib/plans-api";
+import { SidePanelFrameView } from "./views/side-panel-frame-view";
+import { PlansPanelView } from "./views/plans-panel-view";
 
 interface PlansPanelProps {
   onClose: () => void;
 }
 
 /**
- * Persistent, cross-session list of every plan Claude Code has proposed for
+ * Persistent, cross-session list of every plan an agent has proposed for
  * this project — captured at the ExitPlanMode permission and stored in
  * `.atlas/plans.json`. Each entry shows the user message that triggered the
  * plan, a human timestamp, and the plan markdown (expandable). Mirrors the
@@ -29,11 +28,10 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
   const projectPath = useAppStore.use.currentProject()?.path ?? null;
 
   const [plans, setPlans] = useState<PlanRecord[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const load = useCallback(() => {
     if (!projectPath) return;
-    void invoke<PlanRecord[]>("plans_load", { projectPath })
+    void loadPlans(projectPath)
       .then(setPlans)
       .catch(() => {});
   }, [projectPath]);
@@ -46,159 +44,19 @@ export function PlansPanel({ onClose }: PlansPanelProps) {
     return () => window.removeEventListener("atlas:plan-saved", onSaved);
   }, [load]);
 
-  // Esc closes the overlay (it's a plain div, not a Radix dialog).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  // Left-edge resize handle (mirrors the bash panel).
-  const resizeStartXRef = useRef<number | null>(null);
-  const resizeStartWidthRef = useRef<number>(0);
-  const onResizeStart = useCallback(
-    (e: React.MouseEvent) => {
-      resizeStartXRef.current = e.clientX;
-      resizeStartWidthRef.current = plansPanel.width;
-      const onMove = (ev: MouseEvent) => {
-        if (resizeStartXRef.current === null) return;
-        // Panel is anchored right, so dragging left (smaller clientX) widens it.
-        const delta = resizeStartXRef.current - ev.clientX;
-        setPlansPanelWidth(resizeStartWidthRef.current + delta);
-      };
-      const onUp = () => {
-        resizeStartXRef.current = null;
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [plansPanel.width, setPlansPanelWidth],
-  );
-
   return (
-    <>
-      {/* Scrim — click outside the panel to dismiss. */}
-      <div
-        className="absolute inset-0 z-20 scrim-soft animate-fade-in"
-        onClick={onClose}
-        aria-hidden
-      />
-      <div
-        style={{ width: plansPanel.width, top: topInset }}
-        className="absolute right-0 bottom-0 z-30 flex flex-col border-l border-[var(--border)] bg-[var(--sidebar)] shadow-md animate-slide-in-right"
-      >
-        {/* Left-edge resize handle */}
-        <div
-          onMouseDown={onResizeStart}
-          className="absolute top-0 -left-px w-px h-full bg-border hover:bg-primary transition-colors cursor-col-resize z-10"
-          title="Drag to resize"
-        />
-
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 h-[32px] border-b border-[var(--border)] shrink-0">
-          <div className="flex items-center gap-1.5">
-            <ClipboardList size={11} className="text-[var(--muted-foreground)]" />
-            <span className="text-xs font-medium text-[var(--secondary-foreground)]">Plans</span>
-            <span className="text-2xs text-[var(--muted-foreground)]">· {plans.length}</span>
-          </div>
-          <Hint label="Hide plans">
-            <button
-              onClick={onClose}
-              className="p-1 rounded hover:bg-[var(--atlas-element-hover)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
-            >
-              <ChevronRight size={12} />
-            </button>
-          </Hint>
-        </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto hide-scrollbar">
-          {plans.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-[var(--muted-foreground)] leading-relaxed">
-              No plans yet. When Claude Code proposes a plan, it’s saved here with the message that
-              triggered it.
-            </div>
-          ) : (
-            plans.map((p, idx) => {
-              const isOpen = expanded.has(p.id);
-              const isLast = idx === plans.length - 1;
-              return (
-                <div
-                  key={p.id}
-                  className={cn(
-                    "px-3 py-2.5",
-                    !isLast && "border-b border-[var(--atlas-border-subtle)]",
-                  )}
-                >
-                  {/* Header row: user message + expand toggle */}
-                  <button
-                    onClick={() => toggle(p.id)}
-                    className="group w-full text-left flex items-start gap-1.5 cursor-pointer"
-                    title={isOpen ? "Collapse plan" : "Expand plan"}
-                  >
-                    {isOpen ? (
-                      <ChevronDown
-                        size={12}
-                        className="mt-0.5 shrink-0 text-[var(--muted-foreground)]"
-                      />
-                    ) : (
-                      <ChevronRight
-                        size={12}
-                        className="mt-0.5 shrink-0 text-[var(--muted-foreground)]"
-                      />
-                    )}
-                    <span
-                      className={cn(
-                        "text-sm leading-snug text-[var(--secondary-foreground)] group-hover:text-[var(--foreground)] transition-colors",
-                        !isOpen && "line-clamp-2",
-                      )}
-                    >
-                      {p.userMessage || "(no message)"}
-                    </span>
-                  </button>
-
-                  {/* Meta: human timestamp + relative age + session */}
-                  <div className="flex items-center gap-2 pl-[18px] mt-1 text-2xs text-[var(--muted-foreground)]">
-                    <span title={p.timestamp}>{formatPlanTimestamp(p.timestamp)}</span>
-                    <span>·</span>
-                    <span>{planTimeAgo(p.timestamp)}</span>
-                    {p.sessionTitle && (
-                      <>
-                        <span>·</span>
-                        <span className="truncate">{p.sessionTitle}</span>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Expanded plan markdown */}
-                  {isOpen && (
-                    <div className="pl-[18px] mt-2 rounded-md border border-[var(--atlas-border-subtle)] bg-[var(--background)] px-3 py-2 max-h-[420px] overflow-auto">
-                      <Markdown className="text-sm" fileRoot={projectPath}>
-                        {p.plan}
-                      </Markdown>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    </>
+    <SidePanelFrameView
+      panel="plans"
+      icon={ClipboardList}
+      title="Plans"
+      count={plans.length}
+      width={plansPanel.width}
+      top={topInset}
+      onWidthChange={setPlansPanelWidth}
+      onClose={onClose}
+      closeLabel="Hide plans"
+    >
+      <PlansPanelView plans={plans} fileRoot={projectPath} />
+    </SidePanelFrameView>
   );
 }

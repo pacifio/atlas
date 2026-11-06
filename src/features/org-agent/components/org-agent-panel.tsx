@@ -11,6 +11,7 @@
 // right, the thread scrolling under it into the coding chat's progressive blur
 // (`transcript.tsx`).
 
+import { useTipOnMount } from "@/features/tips/lib/use-tip-on-mount";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -26,7 +27,6 @@ import {
   Trash2,
 } from "lucide-react";
 
-import { GradualBlur } from "@/components/gradual-blur";
 import { GlassIconButton } from "@/features/sidebar/components/glass-icon-button";
 import { CollapsibleSectionHeader } from "@/features/sidebar/components/sidebar-section-header";
 import { WorkingRing } from "@/features/sidebar/components/session-row-parts";
@@ -37,7 +37,6 @@ import { timeAgo } from "@/lib/time-ago";
 
 import { revealAgentPanel } from "@/features/layout/lib/org-agent";
 import { cn } from "@/lib/utils";
-import { Segmented } from "@/ui/segmented";
 
 import type { AskSummary } from "../lib/org-agent-types";
 import {
@@ -50,6 +49,7 @@ import {
 } from "../stores/org-agent-store";
 import { OrgAgentLoops } from "./org-agent-loops";
 import { OrgAgentThread } from "./org-agent-thread";
+import { GradualBlur, Segmented } from "@tryatlas/design";
 
 /** The page's views, switched from the history's header. */
 const VIEWS = [
@@ -61,6 +61,7 @@ const VIEWS = [
 const HISTORY_WIDTH = 244;
 
 export function OrgAgentPanel() {
+  useTipOnMount("ask-atlas");
   const asks = useOrgAgentStore.use.asks();
   const pageId = useOrgAgentStore.use.pageId();
   const pageView = useOrgAgentStore.use.pageView();

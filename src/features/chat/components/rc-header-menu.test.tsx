@@ -36,11 +36,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { HintGroup } from "@/ui/hint-group";
 import type { RcPeer, RcRoom } from "../lib/rc-api";
 import { useChatStore } from "../stores/chat-store";
 import { useRcStore } from "../stores/rc-store";
 import { RcHeaderMenu } from "./rc-header-menu";
+import { HintGroup } from "@tryatlas/design";
 
 const TAB = "tab-1";
 const SESSION = "sess-1";

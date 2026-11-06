@@ -24,7 +24,6 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { ExternalLink, ImageOff, Paperclip } from "lucide-react";
-import "@/styles/hljs.css";
 
 import { MarkdownBlockFrame } from "@/components/markdown-block-frame";
 import { isWebUrl, openPullRequest } from "@/features/git/lib/git-pr-api";
@@ -80,10 +79,10 @@ function ProxiedImage({ src, alt, width, height }: ComponentProps<"img">) {
   );
 }
 
-// Headings, lists, code, tables and links take `.prose-chat`, the house
-// markdown style (links in the info hue, a dotted underline on hover), so a
-// pull request reads like every other piece of markdown in the app. Only
-// what that stylesheet cannot do is overridden here.
+// Headings, lists, code, tables and links take `.prose-session`, the house
+// markdown style (the package's `session.css`), so a pull request reads like
+// every other piece of markdown in the app. Only what that stylesheet cannot
+// do is overridden here.
 const COMPONENTS: Components = {
   a({ href, children }) {
     return (
@@ -206,10 +205,7 @@ export default memo(function PullRequestMarkdownImpl({
         ref={ref}
         onClick={onClick}
         onKeyDown={onKeyDown}
-        className={cn(
-          "prose-chat min-w-0 text-sm leading-relaxed break-words text-foreground select-text",
-          className,
-        )}
+        className={cn("prose-session atlas-prose-wrap min-w-0 select-text", className)}
       >
         {splitPullRequestBody(text).map((segment) =>
           segment.kind === "markdown" || segment.media === "image" ? (

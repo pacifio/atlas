@@ -13,8 +13,6 @@
 
 import { useCallback, useState } from "react";
 
-import { Button } from "@/ui/button";
-import { Switch } from "@/ui/switch";
 import type { CommentActions } from "@/features/artifacts/components/comment-thread";
 import { COMMENT_BODY_MAX, type AnchorKind } from "@/features/artifacts/lib/comments-api";
 import { selectionCommentBody } from "@/features/artifacts/lib/selection-comment";
@@ -23,6 +21,7 @@ import type { OrgDirectory } from "@/features/organisations/lib/use-org-director
 import { CITE_MAX_CHARS, capCitation, citedTextMention } from "../lib/cited-text";
 import { linkCiteToComposer } from "../lib/comment-mentions";
 import type { AnchorHit } from "../lib/comment-anchors";
+import { Button, Switch } from "@tryatlas/design";
 
 /** Where a shared cite's comment goes. */
 export interface CiteShareTarget {

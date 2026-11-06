@@ -762,6 +762,9 @@ export const miscHandlers: MockHandlers = {
   // nothing and no `atlas:quit-requested` is ever emitted to answer.
   quit_guard_ready: nothing,
   quit_guard_answer: nothing,
+  // "Clear cache" / "Reset Atlas" schedule a wipe for the next launch and
+  // restart. A browser has neither the data nor a restart, so it does nothing.
+  app_data_reset: nothing,
   "plugin:window|set_badge_count": nothing,
 
   // ── updater ─────────────────────────────────────────────────────────────
@@ -962,6 +965,8 @@ export const miscHandlers: MockHandlers = {
   // A paste carrying file paths is a Finder-only gesture (see `README.md`),
   // so the browser answer is always "no files came with it".
   clipboard_file_paths: (): string[] => [],
+  // Likewise what a Linux paste reads off GTK's clipboard: never here.
+  clipboard_paste_paths: (): string[] => [],
   "plugin:opener|reveal_item_in_dir": nothing,
   usage_write_file: nothing,
   usage_export_markdown: nothing,

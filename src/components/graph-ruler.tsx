@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import { withAlpha } from "@/features/theme/color";
 import { themeBase, themeColor, useThemeVersion } from "@/features/theme/theme-values";
+import { withAlpha } from "@tryatlas/design/theme";
 
 /**
  * Canvas/figma-style ruler overlay for the graph views. Draws a top + left
@@ -10,8 +10,8 @@ import { themeBase, themeColor, useThemeVersion } from "@/features/theme/theme-v
  * One `<canvas>` (not hundreds of DOM ticks) redrawn on viewport change.
  *
  * `fillStyle`/`strokeStyle` take a resolved CSS colour, not a custom-property
- * reference (same constraint as pixi/xterm — decision 14), so the four ruler
- * colours are read through `theme-values.ts` at draw time and the effect
+ * reference (same constraint as pixi/xterm — decision 14), so the ruler's
+ * colours (and the mono font) are read through `theme-values.ts` at draw time and the effect
  * re-runs on `useThemeVersion()` rather than once at module scope.
  */
 
@@ -21,7 +21,7 @@ export interface Viewport {
   scale: number;
 }
 
-const BAND = 18; // ruler thickness, CSS px
+const BAND = 20; // ruler thickness, CSS px
 
 /** Nearest "nice" step (1/2/5 × 10ⁿ) ≥ `raw`. */
 function niceStep(raw: number): number {
@@ -55,16 +55,20 @@ export function GraphRuler({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    // Structural ramp for ticks (matches the graph background dots), muted
-    // foreground for labels, the app's own background for the band fill and
-    // `element.highlight` for the hairline edge — the same 6%-foreground the
-    // rest of the app uses for a raised top edge, so it stays legible in a
-    // light appearance instead of the fixed white-on-cream the old literal
-    // gave it.
-    const TICK_COL = themeColor("border.strong");
+    // The border ramp for ticks — `strong` on the labelled major tick, the
+    // default border on the minor ones so the scale reads at a glance — muted
+    // foreground for labels, the graph's own panel surface for the band fill
+    // and `element.highlight` for the hairline edge (the same raised-edge
+    // tint the rest of the app uses, so it stays legible in a light
+    // appearance).
+    const MAJOR_COL = themeColor("border.strong");
+    const MINOR_COL = themeBase("border");
     const LABEL_COL = themeBase("muted-foreground");
-    const BAND_BG = withAlpha(themeBase("background"), 0.72);
+    const BAND_BG = withAlpha(themeColor("panel.background"), 0.85);
     const BORDER_COL = themeColor("element.highlight");
+    const mono =
+      getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() ||
+      "ui-monospace, monospace";
 
     const { x: vx, y: vy, scale } = viewport;
     // Target ~70px between major ticks on screen.
@@ -73,7 +77,7 @@ export function GraphRuler({
     const worldToScreenX = (wx: number) => wx * scale + vx;
     const worldToScreenY = (wy: number) => wy * scale + vy;
 
-    ctx.font = "9px Inter, -apple-system, system-ui, sans-serif";
+    ctx.font = `500 9px ${mono}`;
     ctx.textBaseline = "middle";
 
     // ── Band backgrounds ──
@@ -89,7 +93,7 @@ export function GraphRuler({
     for (let wx = firstX; wx <= lastX; wx += step) {
       const sx = worldToScreenX(wx);
       if (sx < BAND) continue;
-      ctx.strokeStyle = TICK_COL;
+      ctx.strokeStyle = MAJOR_COL;
       ctx.beginPath();
       ctx.moveTo(sx + 0.5, BAND - 5);
       ctx.lineTo(sx + 0.5, BAND);
@@ -98,7 +102,7 @@ export function GraphRuler({
       // minor ticks
       for (let m = 1; m < 5; m++) {
         const mx = sx + (screenStep / 5) * m;
-        ctx.strokeStyle = TICK_COL;
+        ctx.strokeStyle = MINOR_COL;
         ctx.beginPath();
         ctx.moveTo(mx + 0.5, BAND - 2.5);
         ctx.lineTo(mx + 0.5, BAND);
@@ -112,7 +116,7 @@ export function GraphRuler({
     for (let wy = firstY; wy <= lastY; wy += step) {
       const sy = worldToScreenY(wy);
       if (sy < BAND) continue;
-      ctx.strokeStyle = TICK_COL;
+      ctx.strokeStyle = MAJOR_COL;
       ctx.beginPath();
       ctx.moveTo(BAND - 5, sy + 0.5);
       ctx.lineTo(BAND, sy + 0.5);
@@ -126,7 +130,7 @@ export function GraphRuler({
       ctx.restore();
       for (let m = 1; m < 5; m++) {
         const my = sy + (screenStep / 5) * m;
-        ctx.strokeStyle = TICK_COL;
+        ctx.strokeStyle = MINOR_COL;
         ctx.beginPath();
         ctx.moveTo(BAND - 2.5, my + 0.5);
         ctx.lineTo(BAND, my + 0.5);
@@ -152,14 +156,7 @@ export function GraphRuler({
   return (
     <canvas
       ref={canvasRef}
-      className="z-panel"
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-      }}
+      className="pointer-events-none absolute inset-0 z-panel h-full w-full"
     />
   );
 }

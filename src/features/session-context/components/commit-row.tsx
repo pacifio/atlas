@@ -24,8 +24,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { DropdownMenuItem } from "@/ui/dropdown-menu";
-
 import {
   buildMenuItems,
   resolveQuickAction,
@@ -36,6 +34,7 @@ import { continueGitAction, requestGitAction, runPull } from "../lib/run-git-act
 import { refreshSessionGit, type SessionGit } from "../lib/use-session-git";
 import { useGitActionStore } from "../stores/git-action-store";
 import { DetailsRow, DetailsSplit, RowIcon, RowLabel, RowMeta } from "./details-rows";
+import { DropdownMenuItem } from "@tryatlas/design";
 
 const ICON: Record<QuickActionIcon, LucideIcon> = {
   commit: GitCommitHorizontal,

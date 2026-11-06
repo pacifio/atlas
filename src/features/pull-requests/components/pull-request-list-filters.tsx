@@ -30,8 +30,17 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/ui/button";
+
+import type {
+  PullRequestAuthorFacet,
+  PullRequestLabelFacet,
+  PullRequestListSort,
+  PullRequestLocalFilters,
+} from "../lib/pull-request-list-logic";
+import type { PrInvolvement, PrListState } from "../lib/pull-requests-types";
+import { ActorAvatar } from "./pull-request-presentation";
 import {
+  Button,
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -44,17 +53,8 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/ui/dropdown-menu";
-import { Input } from "@/ui/input";
-
-import type {
-  PullRequestAuthorFacet,
-  PullRequestLabelFacet,
-  PullRequestListSort,
-  PullRequestLocalFilters,
-} from "../lib/pull-request-list-logic";
-import type { PrInvolvement, PrListState } from "../lib/pull-requests-types";
-import { ActorAvatar } from "./pull-request-presentation";
+  Input,
+} from "@tryatlas/design";
 
 export interface FilterOption<Value extends string> {
   value: Value;

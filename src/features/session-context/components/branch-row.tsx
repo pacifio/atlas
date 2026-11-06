@@ -18,19 +18,23 @@ import { Copy, GitBranch, GitBranchPlus } from "lucide-react";
 
 import type { BranchInfo } from "@/features/git/stores/git-store";
 import { gitErrorText } from "@/features/notifications/lib/outcome-notifier";
+import { fixWithAgentAction } from "@/features/ask-agent/lib/open-ask";
+import { anyGitErrorContext } from "@/features/git/lib/git-errors";
 import { cn } from "@/lib/utils";
+
+import { gitCheckout, gitCreateBranch } from "../lib/session-git-api";
+import { refreshSessionGit, type SessionGit } from "../lib/use-session-git";
+import { DetailsSelect, RowIcon, RowLabel } from "./details-rows";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
-} from "@/ui/context-menu";
-import { Input } from "@/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/ui/popover";
-
-import { gitCheckout, gitCreateBranch } from "../lib/session-git-api";
-import { refreshSessionGit, type SessionGit } from "../lib/use-session-git";
-import { DetailsSelect, RowIcon, RowLabel } from "./details-rows";
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@tryatlas/design";
 
 type Badge = "current" | "default" | "remote";
 
@@ -152,6 +156,7 @@ function BranchList({ path, git, onDone }: { path: string; git: SessionGit; onDo
           option.kind === "branch" ? "Could not switch branch" : "Could not create the branch",
           {
             description: gitErrorText(e),
+            action: fixWithAgentAction(anyGitErrorContext(e, path, "git checkout")),
           },
         ),
       )

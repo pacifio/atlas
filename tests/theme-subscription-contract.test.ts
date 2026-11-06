@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
  * Every consumer that reads a RESOLVED theme colour must have a way to hear
  * that the theme changed.
  *
- * Most of Atlas recolours for free, because a CSS rule naming `var(--atlas-…)`
+ * Most of Atlas recolours for free, because a CSS rule naming a theme key (`var(--element-hover)`)
  * is late-bound: `applyTheme` rewrites the `:root` block and the next paint is
  * the new theme. The exceptions are the subsystems that cannot use a custom
  * property — a canvas, a WebGL scene, an xterm `ITheme`, a recharts `fill`, a
@@ -148,7 +148,7 @@ describe("theme subscription contract", () => {
       "src/components/graph-palette.ts", // both pixi graphs
       "src/features/usage/lib/palette.ts", // the Usage tab's series colours
       "src/features/editor/themes/build-cm-theme.ts", // CodeMirror
-      "src/components/mermaid-block.tsx", // mermaid
+      "src/components/views/mermaid-block-view.tsx", // mermaid
     ]) {
       expect(
         readers.map((r) => r.where),
@@ -218,8 +218,8 @@ describe("theme subscription contract", () => {
         "src/features/terminal/lib/terminal-session.ts",
       ],
       "src/components/graph-palette.ts": [
-        "src/features/knowledge/components/knowledge-graph.tsx",
-        "src/features/memory/components/memory-graph-canvas.tsx",
+        "src/features/knowledge/components/views/knowledge-graph-canvas.tsx",
+        "src/features/memory/components/views/memory-graph-canvas-view.tsx",
       ],
       "src/features/editor/themes/build-cm-theme.ts": [
         "src/features/comms/components/draft-editor.tsx",

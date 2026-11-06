@@ -1,9 +1,10 @@
-import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from "@/ui/context-menu";
 import { OpenInEditorContextItems } from "@/features/external-editor/components/open-in-editor-menu";
 import { SYSTEM_EDITOR_ID } from "@/features/external-editor/lib/external-editor-api";
 import { openInEditor } from "@/features/external-editor/lib/preferred-editor";
 import { revealProject } from "@/features/session-context/lib/workspace-actions";
+import { revealInFileManagerLabel } from "@/lib/platform";
 import { diffFileMenuItems, type DiffFileMenuTarget } from "../../lib/diff-file-menu";
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from "@tryatlas/design";
 
 const copyText = (text: string) => void navigator.clipboard.writeText(text).catch(() => {});
 
@@ -37,7 +38,7 @@ export function DiffFileContextMenuContent({
           case "reveal":
             return abs ? (
               <ContextMenuItem key={item} onClick={() => void revealProject(abs)}>
-                Reveal in Finder
+                {revealInFileManagerLabel}
               </ContextMenuItem>
             ) : null;
           case "open-default":

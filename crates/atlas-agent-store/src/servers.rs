@@ -1434,6 +1434,7 @@ mod tests {
     const PLATFORM: Option<NpmPlatform> = Some(NpmPlatform {
         os: "darwin",
         cpu: "arm64",
+        libc: None,
     });
 
     /// A hidden lockfile with one optional platform package for darwin/arm64
