@@ -1,6 +1,7 @@
 // Generated from src-tauri/settings-registry.toml — do not edit. Run `bun run settings:gen` after editing that file.
 
 import type { ThemeOverride } from "@tryatlas/design/theme";
+import type { ModelPriceOverrides } from "@/features/settings/stores/model-pricing-store";
 
 /**
  * Every key under `[settings]` in `config.toml`, typed. The Rust side is
@@ -430,6 +431,16 @@ export interface AppSettings {
    * builds unless this key is set.
    */
   securityScan: boolean;
+  /**
+   * Per-model input, output, cacheRead and cacheWrite prices in USD per million tokens.
+   * Replaces models.dev prices, including for models absent from its catalog. Names match
+   * exactly, then without a provider prefix, then without an eight-digit date suffix. All four
+   * rates are required; zero is allowed. Atlas Agent gateway turns use the account cap;
+   * overrides have no effect there. Example: modelPriceOverrides = { "my-model" = { input =
+   * 1.0, output = 2.0, cacheRead = 0.1, cacheWrite = 0.2 } }. An empty table uses models.dev
+   * prices.
+   */
+  modelPriceOverrides: ModelPriceOverrides;
 }
 
 export type SettingKey = keyof AppSettings;
@@ -515,6 +526,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pullRequestGuideModel: "",
   pullRequestGuideInstructions: "",
   securityScan: false,
+  modelPriceOverrides: {},
 };
 
 export type SettingType =
@@ -1398,5 +1410,14 @@ export const SETTINGS_REGISTRY: readonly SettingMeta[] = [
     title: "Scan new checkpoints for security issues",
     summary:
       "Check each new checkpoint's commit for leaked credentials, risky code and vulnerable dependencies, on this machine.",
+  },
+  {
+    key: "modelPriceOverrides",
+    type: "table",
+    status: "live",
+    page: "chat",
+    section: "Cost estimates",
+    title: "Model price overrides",
+    summary: "Your prices for ACP and bring-your-own-key sessions, in USD per million tokens.",
   },
 ];

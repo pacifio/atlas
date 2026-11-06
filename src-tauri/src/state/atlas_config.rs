@@ -649,6 +649,18 @@ pub struct AppSettings {
     /// worker treats an absent key as ON in development builds.
     #[serde(default)]
     pub security_scan: bool,
+    /// User prices in USD per million tokens, used for local cost estimates.
+    #[serde(default)]
+    pub model_price_overrides: BTreeMap<String, ModelPriceOverride>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelPriceOverride {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
 }
 
 /// The longest `pullRequestGuideInstructions` accepted, in bytes.
@@ -793,6 +805,7 @@ impl Default for AppSettings {
             pull_request_guide_model: String::new(),
             pull_request_guide_instructions: String::new(),
             security_scan: false,
+            model_price_overrides: BTreeMap::new(),
         }
     }
 }
@@ -851,6 +864,27 @@ pub struct ValidationIssue {
 const MAX_TERMINAL_NOTIFY_MS: u32 = 3_600_000;
 
 pub fn validate(settings: &AppSettings) -> Result<(), ValidationIssue> {
+    for (model, price) in &settings.model_price_overrides {
+        if model.trim().is_empty() || model != model.trim() {
+            return Err(ValidationIssue {
+                key: "modelPriceOverrides",
+                message: "model names must be nonempty with no surrounding whitespace".into(),
+            });
+        }
+        for rate in [
+            price.input,
+            price.output,
+            price.cache_read,
+            price.cache_write,
+        ] {
+            if !rate.is_finite() || rate < 0.0 {
+                return Err(ValidationIssue {
+                    key: "modelPriceOverrides",
+                    message: format!("{model}: prices must be finite, nonnegative numbers"),
+                });
+            }
+        }
+    }
     if !settings.ui_scale.is_finite()
         || settings.ui_scale < MIN_UI_SCALE
         || settings.ui_scale > MAX_UI_SCALE
@@ -1108,14 +1142,21 @@ fn annotate(generated: &str) -> String {
     let mut carried: Vec<&str> = Vec::new();
 
     for line in generated.lines() {
-        // A key line, not the `[settings]` header or a blank: it has an `=`,
-        // and something before it. Getting this wrong once meant `[settings]`
+        // A scalar key or a known settings table, not `[settings]` or a blank.
+        // Getting this wrong once meant `[settings]`
         // was read as a key, which drained every remaining doc entry into
         // `carried` and dumped all of them at the bottom of the file.
         let Some(assigned) = line
             .split_once('=')
             .map(|(key, _)| key.trim())
             .filter(|key| !key.is_empty())
+            .or_else(|| {
+                // An empty map is emitted as a table header. Its setting's
+                // comment belongs above that header, just like a scalar key.
+                line.strip_prefix("[settings.")
+                    .and_then(|key| key.strip_suffix(']'))
+                    .filter(|key| known_settings_keys().any(|known| known == *key))
+            })
         else {
             out.push_str(line);
             out.push('\n');
@@ -1314,10 +1355,14 @@ pub struct SettingsPatch {
     pub pull_request_guide_model: Option<String>,
     pub pull_request_guide_instructions: Option<String>,
     pub security_scan: Option<bool>,
+    pub model_price_overrides: Option<BTreeMap<String, ModelPriceOverride>>,
 }
 
 impl SettingsPatch {
     fn apply_to(&self, settings: &mut AppSettings) {
+        if let Some(v) = &self.model_price_overrides {
+            settings.model_price_overrides = v.clone();
+        }
         if let Some(v) = self.auto_add_atlas_gitignore {
             settings.auto_add_atlas_gitignore = v;
         }
@@ -1655,6 +1700,18 @@ impl SettingsPatch {
         }
         if let Some(v) = &self.theme_overrides {
             table["themeOverrides"] = theme_override_item(v);
+        }
+        if let Some(overrides) = &self.model_price_overrides {
+            let mut models = toml_edit::InlineTable::new();
+            for (model, price) in overrides {
+                let mut rates = toml_edit::InlineTable::new();
+                rates.insert("input", price.input.into());
+                rates.insert("output", price.output.into());
+                rates.insert("cacheRead", price.cache_read.into());
+                rates.insert("cacheWrite", price.cache_write.into());
+                models.insert(model, rates.into());
+            }
+            table["modelPriceOverrides"] = toml_edit::value(models);
         }
         if let Some(v) = &self.icon_theme {
             table["iconTheme"] = toml_edit::value(v.as_str());
@@ -2833,6 +2890,15 @@ someFutureKey = \"left alone\"
             pull_request_guide_model: Some("opus".to_string()),
             pull_request_guide_instructions: Some("Show contracts first.\nSkip tests.".to_string()),
             security_scan: Some(!defaults.security_scan),
+            model_price_overrides: Some(BTreeMap::from([(
+                "private/model.v1".into(),
+                ModelPriceOverride {
+                    input: 1.0,
+                    output: 2.0,
+                    cache_read: 0.25,
+                    cache_write: 0.5,
+                },
+            )])),
         };
         let mut expected = defaults.clone();
         patch.apply_to(&mut expected);
@@ -3451,5 +3517,84 @@ red = "#ee0000"
             "an existing key's decor must not be rewritten"
         );
         ConfigManager::from_raw(path, &on_disk).expect("still a valid config");
+    }
+
+    #[test]
+    fn model_price_overrides_are_documented_persisted_and_removable() {
+        let (_dir, path) = tmp_config_path();
+        let raw = "schemaVersion = 1\n[settings]\n# my preference\nenterToSend = false\n";
+        fs::write(&path, raw).unwrap();
+        let mut mgr = ConfigManager::from_raw(path.clone(), raw).unwrap();
+        let overrides = BTreeMap::from([(
+            "private/model.v1".into(),
+            ModelPriceOverride {
+                input: 1.0,
+                output: 2.0,
+                cache_read: 0.25,
+                cache_write: 0.5,
+            },
+        )]);
+        mgr.apply_patch(
+            &SettingsPatch {
+                model_price_overrides: Some(overrides.clone()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("# my preference\nenterToSend = false"));
+        let (_, comment) = SETTINGS_DOCS
+            .iter()
+            .find(|(key, _)| *key == "modelPriceOverrides")
+            .unwrap();
+        assert!(document_for(&AppSettings::default())
+            .to_string()
+            .contains(&format!("{comment}\n[settings.modelPriceOverrides]")));
+        assert!(saved.contains(&format!("{comment}\nmodelPriceOverrides = ")));
+        assert_eq!(
+            ConfigManager::from_raw(path.clone(), &saved)
+                .unwrap()
+                .effective()
+                .model_price_overrides,
+            overrides
+        );
+        mgr.apply_patch(
+            &SettingsPatch {
+                model_price_overrides: Some(BTreeMap::new()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert!(ConfigManager::load_at(path)
+            .effective()
+            .model_price_overrides
+            .is_empty());
+    }
+
+    #[test]
+    fn model_price_overrides_require_four_finite_nonnegative_rates() {
+        let valid = "modelPriceOverrides = { model = { input = 0.0, output = 2.0, cacheRead = 0.25, cacheWrite = 0.5 } }";
+        assert!(validate(&parse_settings(valid).unwrap()).is_ok());
+        for field in ["input", "output", "cacheRead", "cacheWrite"] {
+            for value in ["-1.0", "nan", "inf"] {
+                let mut settings = parse_settings(valid).unwrap();
+                let price = settings.model_price_overrides.get_mut("model").unwrap();
+                let rate = match field {
+                    "input" => &mut price.input,
+                    "output" => &mut price.output,
+                    "cacheRead" => &mut price.cache_read,
+                    _ => &mut price.cache_write,
+                };
+                *rate = value.parse().unwrap();
+                assert_eq!(validate(&settings).unwrap_err().key, "modelPriceOverrides");
+            }
+        }
+        for model in ["", " model", "model "] {
+            let text = valid.replace("model =", &format!("\"{model}\" ="));
+            assert!(validate(&parse_settings(&text).unwrap()).is_err());
+        }
+        assert!(parse_settings("modelPriceOverrides = { model = { input = 1.0 } }").is_err());
     }
 }

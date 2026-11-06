@@ -10,6 +10,7 @@ import { useAgentRegistryStore } from "@/features/agents/stores/agent-registry-s
 import { SettingSelect, SettingStepper, SettingSwitch } from "../layout/setting-controls";
 import { useScopedSetting } from "../../lib/use-scoped-setting";
 import { Switch, Select } from "@tryatlas/design";
+import { ModelPriceOverridesSection } from "./model-price-overrides";
 
 const SIDEBAR_SORTS = [
   { value: "recent", label: "Latest activity" },
@@ -120,6 +121,7 @@ export function ChatPage() {
           />
         </SettingsGroup>
       </SettingsSection>
+      <ModelPriceOverridesSection />
     </SettingsPage>
   );
 }

@@ -24,11 +24,19 @@ export interface ModelPrice {
   context?: number;
 }
 
+export type ModelPriceOverrides = Record<
+  string,
+  Pick<ModelPrice, "input" | "output" | "cacheRead" | "cacheWrite">
+>;
+
 interface ModelPricingState {
+  catalog: Record<string, ModelPrice>;
+  overrides: ModelPriceOverrides;
   prices: Record<string, ModelPrice>;
   loaded: boolean;
   loading: boolean;
   actions: {
+    setOverrides: (overrides: ModelPriceOverrides) => void;
     load: () => Promise<void>;
     refresh: () => Promise<void>;
   };
@@ -37,10 +45,14 @@ interface ModelPricingState {
 let listenerBound = false;
 
 const base = create<ModelPricingState>((set, get) => ({
+  catalog: {},
+  overrides: {},
   prices: {},
   loaded: false,
   loading: false,
   actions: {
+    setOverrides: (overrides) =>
+      set({ overrides, prices: applyPriceOverrides(get().catalog, overrides) }),
     load: async () => {
       // Bind the update listener once so a background/foreground refresh on the
       // Rust side reloads the cache here automatically.
@@ -50,7 +62,11 @@ const base = create<ModelPricingState>((set, get) => ({
       }
       try {
         const prices = await invoke<Record<string, ModelPrice>>("models_pricing_get");
-        set({ prices, loaded: true });
+        set({
+          catalog: prices,
+          prices: applyPriceOverrides(prices, get().overrides),
+          loaded: true,
+        });
       } catch {
         set({ loaded: true });
       }
@@ -60,7 +76,11 @@ const base = create<ModelPricingState>((set, get) => ({
       try {
         await invoke("models_pricing_refresh");
         const prices = await invoke<Record<string, ModelPrice>>("models_pricing_get");
-        set({ prices, loaded: true });
+        set({
+          catalog: prices,
+          prices: applyPriceOverrides(prices, get().overrides),
+          loaded: true,
+        });
       } catch {
         // best-effort — keep whatever's cached
       } finally {
@@ -71,6 +91,23 @@ const base = create<ModelPricingState>((set, get) => ({
 }));
 
 export const useModelPricingStore = createSelectors(base);
+
+/** Mirrors Rust's apply_price_overrides: overrides win before catalog lookup. */
+export function applyPriceOverrides(
+  catalog: Record<string, ModelPrice>,
+  overrides: ModelPriceOverrides,
+): Record<string, ModelPrice> {
+  return Object.fromEntries([
+    ...Object.entries(catalog).map(([model, price]) => [
+      model,
+      { ...price, ...priceForModel(overrides, model) },
+    ]),
+    ...Object.entries(overrides).map(([model, override]) => [
+      model,
+      { ...priceForModel(catalog, model), ...override },
+    ]),
+  ]);
+}
 
 /** Look up a model's price, trying `provider/model` then the bare model id. */
 export function priceFor(
@@ -84,8 +121,8 @@ export function priceFor(
 /**
  * Look up a price from a recorded model id alone, with no provider to help.
  *
- * Mirrors the Rust `price_for` (`src-tauri/src/commands/usage.rs`) and adds one
- * shape it does not need: Atlas records context-window variants as
+ * Mirrors the Rust `price_for` (`src-tauri/src/commands/usage.rs`).
+ * Atlas records context-window variants as
  * `claude-opus-5[1m]`, and the bracket has to come off before the id matches
  * anything models.dev publishes.
  *
@@ -99,7 +136,7 @@ export function priceForModel(
   const raw = model?.trim();
   if (!raw) return null;
   for (const key of candidateKeys(raw)) {
-    const price = prices[key];
+    const price = Object.prototype.hasOwnProperty.call(prices, key) ? prices[key] : null;
     if (price) return price;
   }
   return null;
