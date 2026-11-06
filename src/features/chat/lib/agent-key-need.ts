@@ -74,6 +74,13 @@ const NEEDS: ProviderNeed[] = [
     phrases: ["cheaper inference api key", "cheaperinference api key"],
   },
   {
+    provider: "runcrate",
+    label: "Runcrate",
+    consoleHint: "runcrate.ai/dashboard/api-keys",
+    envVars: ["RUNCRATE_API_KEY"],
+    phrases: ["runcrate api key"],
+  },
+  {
     provider: "xai",
     label: "xAI",
     consoleHint: "console.x.ai",

@@ -181,6 +181,15 @@ export const PROVIDERS: ProviderDef[] = [
     placeholder: "free",
     chat: true,
   },
+  {
+    id: "runcrate",
+    name: "Runcrate",
+    env: "RUNCRATE_API_KEY",
+    category: "Inference",
+    docsUrl: "https://www.runcrate.ai/dashboard/api-keys",
+    placeholder: "rc_live_...",
+    chat: true,
+  },
 
   // ── Gateways / proxies ───────────────────────────────────────────
   {
