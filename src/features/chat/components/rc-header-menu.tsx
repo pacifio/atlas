@@ -12,7 +12,7 @@
 
 import { Popover } from "@base-ui/react/popover";
 
-import { sessionDisplayTitle } from "../lib/session-title";
+import { useSessionTitle } from "../hooks/use-session-title";
 import { useRemoteControl } from "../lib/use-remote-control";
 import { useChatStore } from "../stores/chat-store";
 import { RcRoomPanel } from "./rc-room-panel";
@@ -23,10 +23,7 @@ export function RcHeaderMenu({ tabId }: { tabId: string }) {
   // Read by tab: the controls are portalled out of the chat panel's tree, and
   // the id binds seconds after the tab opens.
   const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId ?? "");
-  const title = useChatStore((s) => {
-    const session = s.sessions[tabId];
-    return session ? sessionDisplayTitle(session.title, session.firstUserContent) : "";
-  });
+  const title = useSessionTitle(tabId);
   const remote = useRemoteControl(acpSessionId, title);
   const room = remote.room;
   if (!room) return null;

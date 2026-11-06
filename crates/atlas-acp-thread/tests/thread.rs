@@ -1026,6 +1026,61 @@ async fn an_agent_title_is_accepted_and_announced() {
     assert!(saw_title_update(&mut events));
 }
 
+#[tokio::test]
+async fn only_the_first_nonempty_agent_title_is_announced() {
+    let (mut thread, mut events, _conn) = new_thread();
+    for title in ["", "   ", "Atlas next-steps"] {
+        thread.handle_session_update(title_update(title)).unwrap();
+    }
+    assert_eq!(thread.title(), None);
+    assert!(!saw_title_update(&mut events));
+
+    thread
+        .handle_session_update(title_update("Fix the parser"))
+        .unwrap();
+    assert!(saw_title_update(&mut events));
+    for title in ["Fix the parser", "Rewrite the tokenizer", ""] {
+        thread.handle_session_update(title_update(title)).unwrap();
+    }
+    assert_eq!(thread.title().map(Arc::as_ref), Some("Fix the parser"));
+    assert!(!saw_title_update(&mut events));
+}
+
+#[tokio::test]
+async fn a_resumed_title_is_not_replaced_by_later_agent_titles() {
+    let (tx, mut events) = event_channel();
+    let mut thread = AcpThread::new(
+        acp::SessionId::new("test-session"),
+        StubAgentConnection::new(),
+        Vec::new(),
+        Some(Arc::from("Fix the parser")),
+        tx,
+    );
+    thread
+        .handle_session_update(title_update("Rewrite the tokenizer"))
+        .unwrap();
+    assert_eq!(thread.title().map(Arc::as_ref), Some("Fix the parser"));
+    assert!(!saw_title_update(&mut events));
+}
+
+#[tokio::test]
+async fn a_blank_resumed_title_still_accepts_the_first_agent_title() {
+    let (tx, mut events) = event_channel();
+    let mut thread = AcpThread::new(
+        acp::SessionId::new("test-session"),
+        StubAgentConnection::new(),
+        Vec::new(),
+        Some(Arc::from("   ")),
+        tx,
+    );
+    assert_eq!(thread.title(), None);
+    thread
+        .handle_session_update(title_update("Fix the parser"))
+        .unwrap();
+    assert_eq!(thread.title().map(Arc::as_ref), Some("Fix the parser"));
+    assert!(saw_title_update(&mut events));
+}
+
 /// The bug: Atlas appends its next-steps directive to the wire prompt, so an
 /// agent titling a short message summarises Atlas instead of the user. Every
 /// reader of `title()` lives in another crate, so the rejection has to happen
