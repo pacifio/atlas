@@ -65,7 +65,7 @@ Atlas is a "control-surface IDE" built around managing your agents' context.
 - **Context follows you between agents.** `@` a file, repo, branch or past session. Your `CLAUDE.md`, `AGENTS.md` and knowledge notes reach every agent, and a new session is briefed on where the last one stopped.
 - **Conversations are context too.** Team chat, shared prompts and Spaces, right next to your agents.
 - **Steer a live session from anywhere.** Start remote control on a desktop session and drive it from a browser, on another computer or your phone. Invite teammates to watch, and hand one of them the controls.
-- **The rest of the IDE is there too.** Editor, block terminal, source control and pull requests, in the same window.
+- **The rest of the IDE is there too.** Editor, terminal, source control and pull requests, in the same window.
 
 <img src=".github/assets/readme/session.webp" alt="A session in the Atlas desktop app: the agent's answer about the repository's git status, a details panel with the branch, changes, Commit, push &amp; PR, attached projects and Remote control marked Live, and a toast confirming remote control is on" width="900" />
 
@@ -166,7 +166,7 @@ Works with no account and no network.
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **Editor**         | CodeMirror editing surface, with per-project editor state restored across restarts                                                                                                     | [Editor](https://docs.tryatlas.cc/docs/product/editor)                 |
 | **Git**            | Real commit graph with lane assignment, stage/unstage/commit, branch operations, and file-level diffs                                                                                  | [Git & Diff](https://docs.tryatlas.cc/docs/source-control/git)         |
-| **Terminal**       | Block terminal where each command carries its own output, exit code, and duration, plus a full interactive surface for `vim`, `htop`, and friends                                      | [Terminal](https://docs.tryatlas.cc/docs/product/terminal)             |
+| **Terminal**       | Your own shell in a tab, themed with the app, so `vim`, `htop` and friends work as they do anywhere else                                                                               | [Terminal](https://docs.tryatlas.cc/docs/product/terminal)             |
 | **Knowledge base** | Plain markdown notes in `.atlas/knowledge/`, kept on your machine (`.atlas/` is gitignored by default), with backlinks, a link graph, and export to HTML or a standalone server binary | [Knowledge base](https://docs.tryatlas.cc/docs/context/knowledge-base) |
 | **Browser**        | Native WebKit webview in a tab, with real logins, cookies, and a reader mode                                                                                                           | [Explorer](https://docs.tryatlas.cc/docs/product/explorer)             |
 | **Canvas**         | Spatial board for notes and their connections, persisted as JSON in the project                                                                                                        |                                                                        |
