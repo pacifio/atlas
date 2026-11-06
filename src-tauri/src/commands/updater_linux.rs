@@ -32,7 +32,7 @@ const RECHECK_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Where a release announcement may send the user.
 const ALLOWED_URL_PREFIXES: &[&str] = &[
-    "https://github.com/pacifio/atlas/releases",
+    "https://github.com/tryatlas/atlas/releases",
     "https://tryatlas.cc/",
 ];
 
@@ -204,11 +204,11 @@ mod tests {
     #[test]
     fn a_release_link_must_be_the_projects_own() {
         assert_eq!(
-            allowed_url(" https://github.com/pacifio/atlas/releases/tag/alpha-0.4.2 "),
-            Some("https://github.com/pacifio/atlas/releases/tag/alpha-0.4.2".to_string())
+            allowed_url(" https://github.com/tryatlas/atlas/releases/tag/alpha-0.4.2 "),
+            Some("https://github.com/tryatlas/atlas/releases/tag/alpha-0.4.2".to_string())
         );
         assert!(allowed_url("https://tryatlas.cc/download").is_some());
-        assert!(allowed_url("http://github.com/pacifio/atlas/releases").is_none());
+        assert!(allowed_url("http://github.com/tryatlas/atlas/releases").is_none());
         assert!(allowed_url("https://github.com/someone/else/releases").is_none());
         assert!(allowed_url("https://tryatlas.cc.evil.example/").is_none());
         assert!(allowed_url("javascript:alert(1)").is_none());

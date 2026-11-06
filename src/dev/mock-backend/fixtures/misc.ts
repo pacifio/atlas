@@ -965,6 +965,8 @@ export const miscHandlers: MockHandlers = {
   // A paste carrying file paths is a Finder-only gesture (see `README.md`),
   // so the browser answer is always "no files came with it".
   clipboard_file_paths: (): string[] => [],
+  // Likewise what a Linux paste reads off GTK's clipboard: never here.
+  clipboard_paste_paths: (): string[] => [],
   "plugin:opener|reveal_item_in_dir": nothing,
   usage_write_file: nothing,
   usage_export_markdown: nothing,

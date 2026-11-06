@@ -710,6 +710,7 @@ dependencies = [
  "dotenvy",
  "dunce",
  "futures",
+ "gtk",
  "ignore",
  "keyring-core",
  "libc",

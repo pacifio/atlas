@@ -73,7 +73,10 @@ prefix goes. A test asserts the mapping has no collisions, including with the sh
 base tokens.
 
 **Distribution.** The package is installed from a git tag
-(`github:tryatlas/design#v0.x.y`) until the `@tryatlas` npm scope is set up, then from npm.
+(`github:tryatlas/design#v0.x.y`). It is not published to npm: every consumer is an
+Atlas repo with access to the GitHub org, so a registry would add a scope and publish
+credentials without changing what installs. (Amended 2026-11-07; the original plan moved to
+npm once a scope existed.)
 Desktop pins an exact version so release builds are reproducible. Web and docs may use a
 range.
 

@@ -204,8 +204,8 @@ fn search_failure(
     reset: Option<&str>,
     now_secs: u64,
 ) -> String {
-    let limited = (status == 403 || status == 429)
-        && (remaining == Some("0") || retry_after.is_some());
+    let limited =
+        (status == 403 || status == 429) && (remaining == Some("0") || retry_after.is_some());
     if !limited {
         return format!("GitHub answered {status}");
     }
@@ -694,14 +694,20 @@ mod clone_guard_tests {
 
     #[test]
     fn other_refusals_name_the_status() {
-        assert_eq!(search_failure(403, Some("5"), None, None, 0), "GitHub answered 403");
-        assert_eq!(search_failure(500, None, None, None, 0), "GitHub answered 500");
+        assert_eq!(
+            search_failure(403, Some("5"), None, None, 0),
+            "GitHub answered 403"
+        );
+        assert_eq!(
+            search_failure(500, None, None, None, 0),
+            "GitHub answered 500"
+        );
     }
 
     #[test]
     fn only_github_https_urls_parse() {
-        assert!(parse_github_https("https://github.com/pacifio/atlas").is_ok());
-        assert!(parse_github_https("https://github.com/pacifio/atlas.git").is_ok());
+        assert!(parse_github_https("https://github.com/tryatlas/atlas").is_ok());
+        assert!(parse_github_https("https://github.com/tryatlas/atlas.git").is_ok());
         // The RCE shapes: flag injection and shell transports.
         assert!(parse_github_https("--upload-pack=touch /tmp/pwn").is_err());
         assert!(parse_github_https("ext::sh -c 'touch /tmp/pwn'").is_err());

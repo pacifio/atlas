@@ -4,7 +4,7 @@ import { ViewerHeaderView } from "@/components/viewer-header-view";
 
 export interface UnsupportedViewProps {
   filePath: string;
-  /** The reveal button's text ("Open in Finder"). */
+  /** The reveal button's text ("Reveal in Finder"). */
   revealLabel: string;
   onReveal: () => void;
 }
