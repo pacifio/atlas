@@ -605,6 +605,7 @@ pub fn run() {
             commands::auth::auth_delete_org,
             commands::window::window_zoom,
             commands::clipboard::clipboard_file_paths,
+            commands::clipboard::clipboard_paste_paths,
             commands::clipboard::clipboard_write_text,
             commands::clipboard::scratch_write_bytes,
             commands::fonts::list_font_families,
