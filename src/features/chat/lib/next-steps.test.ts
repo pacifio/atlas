@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripNextSteps } from "./next-steps";
+import { appendNextStepsDirective, stripNextSteps } from "./next-steps";
 
 /** The previous implementation, verbatim, as the oracle. */
 function stripOld(content: string): string {
@@ -53,4 +53,30 @@ describe("stripNextSteps", () => {
       expect(stripNextSteps(p), `prefix ${i}`).toBe(stripOld(p));
     }
   });
+});
+
+describe("appendNextStepsDirective", () => {
+  it.each([
+    "/mcp",
+    "/mcp reconnect all",
+    "/mcp enable atlas_memory",
+    "/mcp disable atlas_memory",
+    "/usage",
+    "/status",
+    "/review",
+    "/remember",
+    "/mcp:server:command argument",
+    "  /mcp\n",
+  ])("preserves the slash command %j without hidden arguments", (command) => {
+    expect(appendNextStepsDirective(command)).toBe(command);
+  });
+
+  it.each(["Explain what /mcp does", "/Users/me/app.ts is broken, fix it", "/ is the root"])(
+    "still requests suggestions for prose %j",
+    (prompt) => {
+      const wire = appendNextStepsDirective(prompt);
+      expect(wire).toContain(`${prompt}\n\n═══ Atlas next-steps ═══`);
+      expect(wire).toContain("<next_steps>");
+    },
+  );
 });
