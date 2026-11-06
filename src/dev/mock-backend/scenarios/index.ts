@@ -75,6 +75,7 @@ import { pullRequestScenarios } from "./pull-request";
 import { sourceControlScenarios } from "./source-control";
 import { sessionContext } from "./session-context";
 import { sessionProjects } from "./session-projects";
+import { sessionTitles } from "./session-titles";
 import { sidebar } from "./sidebar";
 import { timelineEmpty } from "./timeline-empty";
 import { timelineLong } from "./timeline-long";
@@ -158,6 +159,7 @@ const all: Scenario[] = [
   memoryError,
   memoryLoading,
   sessionContext,
+  sessionTitles,
   ...pullRequestScenarios,
   ...sourceControlScenarios,
   sessionProjects,
