@@ -98,6 +98,7 @@ export function PrivacyPage() {
           />
           <SettingsRow
             setting="logRetentionDays"
+            status="Applies the next time Atlas starts."
             control={<SettingStepper setting="logRetentionDays" unit="d" />}
           />
         </SettingsGroup>
