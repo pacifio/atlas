@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { act, cleanup, renderHook } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const backend = vi.hoisted(() => ({
@@ -51,6 +52,7 @@ function agentTitle(title: string) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.clearAllMocks();
   backend.rows = [];
   resetThreadHistoryForTests();
   useChatStore.setState({ sessions: {}, queues: {}, pendingPermissions: {} });
@@ -118,6 +120,35 @@ describe("useSessionTitle", () => {
       agentTitle("Parser error recovery");
     });
     expect(result.current).toBe("My first name");
+  });
+
+  it("shares one history subscription and coalesces updates across title consumers", async () => {
+    actions().setAcpBinding(TAB, "agent-1", SESSION, "/tmp/project");
+    const header = renderHook(() => useSessionTitle(TAB));
+    const remoteControl = renderHook(() => useSessionTitle(TAB));
+    await act(async () => {});
+    const reads = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "threads_history");
+    expect(reads()).toHaveLength(1);
+    expect(backend.listeners.size).toBe(1);
+
+    await act(async () => {
+      backend.rows = [{ sessionId: SESSION, title: "Parser error recovery" }];
+      for (let i = 0; i < 5; i++) {
+        for (const notify of backend.listeners) notify();
+      }
+      await vi.advanceTimersByTimeAsync(HISTORY_COALESCE_MS - 1);
+    });
+    expect(reads()).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(reads()).toHaveLength(2);
+    expect(header.result.current).toBe("Parser error recovery");
+    expect(remoteControl.result.current).toBe("Parser error recovery");
+
+    header.unmount();
+    expect(backend.listeners.size).toBe(1);
+    remoteControl.unmount();
+    await act(async () => {});
+    expect(backend.listeners.size).toBe(0);
   });
 
   it("restores the full combined title and never carries it into another session", async () => {
