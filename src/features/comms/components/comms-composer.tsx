@@ -307,6 +307,7 @@ export function CommsComposer({
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onPasteLargeText={handlePasteLargeText}
+            onPastePaths={(paths) => actions.attachFiles(convId, paths)}
           />
         ) : (
           // Same geometry, so the composer does not resize when the real
