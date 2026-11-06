@@ -1,5 +1,6 @@
 import { OpenInEditorContextItems } from "@/features/external-editor/components/open-in-editor-menu";
 import type { WorkingTreeChanges } from "@/features/git/lib/use-working-tree-changes";
+import { revealInFileManagerLabel } from "@/lib/platform";
 
 import { absoluteOf } from "../../lib/project-file-ops";
 import type { TreeRowData } from "../../lib/project-tree-model";
@@ -95,7 +96,9 @@ export function ProjectTreeRowMenu({
         </ContextMenuItem>
       )}
       <ContextMenuSeparator />
-      <ContextMenuItem onClick={() => void revealInFinder(abs)}>Reveal in Finder</ContextMenuItem>
+      <ContextMenuItem onClick={() => void revealInFinder(abs)}>
+        {revealInFileManagerLabel}
+      </ContextMenuItem>
       {isDir ? (
         <ContextMenuItem onClick={() => terminalAt(abs)}>Open in Terminal</ContextMenuItem>
       ) : (
@@ -199,7 +202,7 @@ export function ProjectTreeEmptyMenu({
       {clipboard && <ContextMenuItem onClick={() => paste("")}>Paste</ContextMenuItem>}
       <ContextMenuSeparator />
       <ContextMenuItem onClick={() => void revealInFinder(root)}>
-        Reveal Project in Finder
+        {revealInFileManagerLabel}
       </ContextMenuItem>
       <ContextMenuItem onClick={() => terminalAt(root)}>Open in Terminal</ContextMenuItem>
       <OpenInEditorContextItems path={root} />
