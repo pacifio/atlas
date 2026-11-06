@@ -29,7 +29,7 @@ describe("announceLinuxRelease", () => {
   });
 
   it("names the version once, opens the page, and can skip the version", () => {
-    const url = "https://github.com/pacifio/atlas/releases/tag/alpha-0.4.2";
+    const url = "https://github.com/tryatlas/atlas/releases/tag/alpha-0.4.2";
     announceLinuxRelease({ version: "0.4.2", currentVersion: "0.4.1", url });
 
     expect(toast).toHaveBeenCalledTimes(1);

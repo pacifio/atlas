@@ -150,6 +150,12 @@ export const NON_RUST = [
   ".github/dependabot.yml",
   ".coderabbit.yaml",
   ".github/workflows/release-linux.yml",
+  // Release automation and the PR-title check: neither runs in CI, and the
+  // version files a release PR changes are classified on their own.
+  ".github/workflows/release.yml",
+  ".github/workflows/pr-title.yml",
+  "release-please-config.json",
+  ".release-please-manifest.json",
   "*.md",
   "LICENSE",
   // The fundingjson.org manifest: project metadata, read by nothing in CI.
@@ -300,7 +306,7 @@ export function resolveRange(env, commitExists) {
     return { base: env.PR_BASE, head: "HEAD" };
   }
   if (event === "push") {
-    // A merge to main is a release: it gets the full suite, not a diff.
+    // Everything lands on main, so a push there gets the full suite, not a diff.
     if (env.GITHUB_REF_NAME === "main") return { all: "push to main" };
     const before = env.BEFORE ?? "";
     if (!before || NULL_SHA.test(before)) return { all: "new branch, no previous head" };

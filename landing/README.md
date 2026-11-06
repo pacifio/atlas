@@ -83,11 +83,11 @@ Three external links live in `index.html`. Search by tag to find them:
 | Target            | Where                  | Current value |
 |-------------------|------------------------|---------------|
 | Discord           | nav pill, mid-page CTA | `https://discord.gg/GmnFggaPfP` |
-| GitHub (repo)     | nav, hero, CTA, footer | `https://github.com/pacifio/atlas` |
+| GitHub (repo)     | nav, hero, CTA, footer | `https://github.com/tryatlas/atlas` |
 | X / Twitter       | footer                 | `https://x.com/antarys_ai` |
 | LinkedIn          | footer                 | `https://www.linkedin.com/company/107506241/` |
 | ACP docs          | "Read the ACP docs" button | `https://github.com/zed-industries/agent-client-protocol` |
-| Download for Mac  | nav, hero, CTA-section | `https://github.com/pacifio/atlas/releases/download/alpha-0.2.6/Atlas_0.2.6_aarch64.dmg` |
+| Download for Mac  | nav, hero, CTA-section | `https://github.com/tryatlas/atlas/releases/download/alpha-0.2.6/Atlas_0.2.6_aarch64.dmg` |
 
 The download URL is hard-coded to the alpha-0.2.6 GitHub Release asset.
 When you cut a new release, update the version label + URL in three

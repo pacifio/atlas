@@ -353,8 +353,8 @@ mod tests {
     #[test]
     fn github_specs() {
         assert_eq!(
-            github_clone_url("pacifio/atlas").as_deref(),
-            Some("https://github.com/pacifio/atlas.git")
+            github_clone_url("tryatlas/atlas").as_deref(),
+            Some("https://github.com/tryatlas/atlas.git")
         );
         assert_eq!(
             github_clone_url("https://github.com/a/b/").as_deref(),

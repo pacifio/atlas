@@ -328,7 +328,7 @@ cat <<EOF > "${DEB_STAGING}/usr/share/doc/tryatlas/copyright"
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Atlas
 Upstream-Contact: Atlas Team <contact@tryatlas.cc>
-Source: https://github.com/pacifio/atlas
+Source: https://github.com/tryatlas/atlas
 
 Files: *
 Copyright: Atlas contributors
@@ -337,7 +337,7 @@ License: Apache-2.0
  /usr/share/common-licenses/Apache-2.0. The licenses of bundled third-party
  code are in /usr/share/licenses/tryatlas.
 EOF
-printf 'tryatlas (%s) unstable; urgency=medium\n\n  * Atlas %s. Release notes: https://github.com/pacifio/atlas/releases/tag/%s\n\n -- Atlas Team <contact@tryatlas.cc>  %s\n' \
+printf 'tryatlas (%s) unstable; urgency=medium\n\n  * Atlas %s. Release notes: https://github.com/tryatlas/atlas/releases/tag/%s\n\n -- Atlas Team <contact@tryatlas.cc>  %s\n' \
   "${VERSION}" "${VERSION}" "${RELEASE_TAG}" "$(date -R -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}")" \
   | gzip -9n > "${DEB_STAGING}/usr/share/doc/tryatlas/changelog.Debian.gz"
 chmod 644 "${DEB_STAGING}/usr/share/doc/tryatlas/"*

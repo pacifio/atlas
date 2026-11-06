@@ -33,7 +33,6 @@
     "test:rust": "bash scripts/test-rust.sh",
     "ci:local": "bun scripts/ci-local.mjs",
     "bump": "bash scripts/bump.sh",
-    "debump": "bash scripts/debump.sh",
     "test:watch": "vitest",
     "typecheck": "bun run --parallel typecheck:app typecheck:test",
     "typecheck:app": "tsc --noEmit -p tsconfig.json",
