@@ -3,8 +3,7 @@ import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcu
 import { PaneHeader } from "@/components/titlebar";
 import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
 import { SessionSwitcher } from "@/features/sidebar/components/session-switcher";
-import { useChatStore } from "@/features/chat/stores/chat-store";
-import { sessionDisplayTitle } from "@/features/chat/lib/session-title";
+import { useSessionTitle } from "@/features/chat/hooks/use-session-title";
 import { SessionHeaderSlot } from "@/features/chat/components/session-header-slot";
 import { Plus, Maximize2, Minimize2 } from "lucide-react";
 import { columnChrome } from "../lib/shell-edges";
@@ -189,16 +188,13 @@ function namedInWindowBar(tab: Tab): boolean {
  *  itself does not repeat it. On a session it is also the switch between the
  *  project's sessions, and where a new one starts (`session-switcher.tsx`). */
 function MainTitle({ tab }: { tab: Tab }) {
-  const sessionTitle = useChatStore((s) => {
-    const session = tab.type === "chat" ? s.sessions[tab.id] : undefined;
-    return session ? sessionDisplayTitle(session.title, session.firstUserContent) : null;
-  });
-  if (tab.type === "chat") return <SessionSwitcher title={sessionTitle ?? tab.title} />;
-  return (
-    <span className="min-w-0 truncate px-1 text-sm text-foreground">
-      {sessionTitle ?? tab.title}
-    </span>
-  );
+  if (tab.type === "chat") return <SessionTitle tab={tab} />;
+  return <span className="min-w-0 truncate px-1 text-sm text-foreground">{tab.title}</span>;
+}
+
+function SessionTitle({ tab }: { tab: Tab }) {
+  const title = useSessionTitle(tab.id, tab.title);
+  return <SessionSwitcher title={title} />;
 }
 
 /**
