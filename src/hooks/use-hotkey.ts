@@ -4,6 +4,7 @@ import type { ActionId } from "@/features/keybindings/lib/actions";
 import { useKeybindingsStore } from "@/features/keybindings/stores/keybindings-store";
 import {
   hasActionHandler,
+  notifyActionHandlersChanged,
   registerActionHandlers,
   runAction,
 } from "@/features/keybindings/lib/action-registry";
@@ -54,7 +55,14 @@ export function useActionHotkeys(handlers: Partial<Record<ActionId, () => void>>
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
+  // Closures are fresh on each App render; only membership changes affect
+  // which shortcuts the navigation hints may advertise.
+  const handlerIds = (Object.keys(handlers) as ActionId[])
+    .filter((id) => typeof handlers[id] === "function")
+    .sort()
+    .join(" ");
   useEffect(() => registerActionHandlers(() => handlersRef.current), []);
+  useEffect(() => notifyActionHandlersChanged(), [handlerIds]);
 
   useEffect(() => {
     function handler(e: KeyboardEvent) {

@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   LEGACY_TAB_TYPES,
   ORG_SCOPED_TYPES,
+  PROJECTLESS_TYPES,
   TAB_TYPES,
   WINDOW_TYPES,
   isDestinationOnly,
@@ -27,6 +28,17 @@ export interface Tab {
   /** Which split column this tab lives in. Absent = the default "main"
    *  column (so existing tab literals don't need to set it). */
   groupId?: string;
+}
+
+/** A project has per-pane strips; the projectless window has one filtered strip. */
+export function navigationTabs(
+  tabs: readonly Tab[],
+  focusedGroupId: string,
+  projectless = false,
+): Tab[] {
+  return tabs.filter((tab) =>
+    projectless ? PROJECTLESS_TYPES.has(tab.type) : groupOf(tab) === focusedGroupId,
+  );
 }
 
 /** A project's saved tab/split view — everything needed to restore its
@@ -179,8 +191,8 @@ interface LayoutActions {
     setTabData: (id: string, patch: Record<string, unknown>) => void;
     navigateTabBack: () => void;
     navigateTabForward: () => void;
-    activateTabByIndex: (i: number) => void;
-    cycleTab: (delta: 1 | -1) => void;
+    activateTabByIndex: (i: number, projectless?: boolean) => void;
+    cycleTab: (delta: 1 | -1, projectless?: boolean) => void;
     // ── Split view ──
     /** Set which column has keyboard focus. */
     setFocusedGroup: (groupId: string) => void;
@@ -856,19 +868,20 @@ export const useLayoutStore = createSelectors(
                 }
               }
             }),
-          // ⌘1–9 — select the i-th tab WITHIN the focused column.
-          activateTabByIndex: (i) =>
+          // ⌘1–9 — use the same visible targets as the current tab strip.
+          activateTabByIndex: (i, projectless = false) =>
             set((s) => {
-              const groupTabs = s.tabs.filter((t) => groupOf(t) === s.focusedGroupId);
+              const groupTabs = navigationTabs(s.tabs, s.focusedGroupId, projectless);
               const target = i < 0 ? groupTabs[groupTabs.length - 1] : groupTabs[i];
               if (!target) return;
+              s.focusedGroupId = groupOf(target);
               s.activeByGroup[s.focusedGroupId] = target.id;
               pushTabHistory(s, target.id);
               syncActiveMirror(s);
             }),
-          cycleTab: (delta) =>
+          cycleTab: (delta, projectless = false) =>
             set((s) => {
-              const groupTabs = s.tabs.filter((t) => groupOf(t) === s.focusedGroupId);
+              const groupTabs = navigationTabs(s.tabs, s.focusedGroupId, projectless);
               if (groupTabs.length === 0) return;
               const cur = s.activeByGroup[s.focusedGroupId];
               const ci = Math.max(
@@ -876,6 +889,7 @@ export const useLayoutStore = createSelectors(
                 groupTabs.findIndex((t) => t.id === cur),
               );
               const next = groupTabs[(ci + delta + groupTabs.length) % groupTabs.length];
+              s.focusedGroupId = groupOf(next);
               s.activeByGroup[s.focusedGroupId] = next.id;
               pushTabHistory(s, next.id);
               syncActiveMirror(s);
