@@ -1129,6 +1129,9 @@ pub struct AcpThread {
     attached_ever: Vec<PathBuf>,
     parent_session_id: Option<acp::SessionId>,
     title: Option<Arc<str>>,
+    /// Only a valid title received over ACP freezes titling. A stored seed
+    /// may still be the first-message placeholder from an earlier session.
+    has_agent_title: bool,
     entries: Vec<AgentThreadEntry>,
     /// When each entry was first appended, parallel to `entries`.
     ///
@@ -1201,6 +1204,7 @@ impl AcpThread {
             // title forward into a thread that would then re-record it.
             title: title
                 .filter(|title| !title.trim().is_empty() && !is_host_machinery_title(title)),
+            has_agent_title: false,
             entries: Vec::new(),
             entry_created_at: Vec::new(),
             replaying: false,
@@ -1539,8 +1543,8 @@ impl AcpThread {
             acp::SessionUpdate::Plan(plan) => self.update_plan(plan),
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
                 // The first agent title replaces the first-message fallback.
-                // Keep it stable through later turns (and a stored title
-                // through resume); user renames live in thread metadata.
+                // Keep it stable through later turns; a resumed seed is not
+                // proof of an agent title. User renames live in thread metadata.
                 if let MaybeUndefined::Value(title) = info_update.title {
                     let title: Arc<str> = title.into();
                     // Dropped, not stored-then-hidden: every consumer of
@@ -1550,7 +1554,8 @@ impl AcpThread {
                         tracing::debug!(%title, "ignoring empty or host-machinery agent title");
                         return Ok(());
                     }
-                    if self.title.is_none() {
+                    if !self.has_agent_title {
+                        self.has_agent_title = true;
                         self.title = Some(title);
                         self.emit(AcpThreadEvent::TitleUpdated);
                     }

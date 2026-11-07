@@ -188,12 +188,12 @@ function namedInWindowBar(tab: Tab): boolean {
  *  itself does not repeat it. On a session it is also the switch between the
  *  project's sessions, and where a new one starts (`session-switcher.tsx`). */
 function MainTitle({ tab }: { tab: Tab }) {
-  if (tab.type === "chat") return <SessionTitle tabId={tab.id} />;
+  if (tab.type === "chat") return <SessionTitle tab={tab} />;
   return <span className="min-w-0 truncate px-1 text-sm text-foreground">{tab.title}</span>;
 }
 
-function SessionTitle({ tabId }: { tabId: string }) {
-  const title = useSessionTitle(tabId);
+function SessionTitle({ tab }: { tab: Tab }) {
+  const title = useSessionTitle(tab.id, tab.title);
   return <SessionSwitcher title={title} />;
 }
 

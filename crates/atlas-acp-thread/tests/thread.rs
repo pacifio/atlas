@@ -1057,9 +1057,51 @@ async fn a_resumed_title_is_not_replaced_by_later_agent_titles() {
         tx,
     );
     thread
+        .handle_session_update(title_update("Fix the parser"))
+        .unwrap();
+    assert!(saw_title_update(&mut events));
+    thread
         .handle_session_update(title_update("Rewrite the tokenizer"))
         .unwrap();
     assert_eq!(thread.title().map(Arc::as_ref), Some("Fix the parser"));
+    assert!(!saw_title_update(&mut events));
+}
+
+#[tokio::test]
+async fn a_resumed_placeholder_is_replaced_by_only_the_first_valid_agent_title() {
+    let (tx, mut events) = event_channel();
+    let mut thread = AcpThread::new(
+        acp::SessionId::new("test-session"),
+        StubAgentConnection::new(),
+        Vec::new(),
+        Some(Arc::from("Please fix the parser's error recovery")),
+        tx,
+    );
+    for title in ["", "   ", "Atlas next-steps"] {
+        thread.handle_session_update(title_update(title)).unwrap();
+    }
+    assert_eq!(
+        thread.title().map(Arc::as_ref),
+        Some("Please fix the parser's error recovery")
+    );
+    assert!(!saw_title_update(&mut events));
+
+    thread
+        .handle_session_update(title_update("Parser error recovery"))
+        .unwrap();
+    assert_eq!(
+        thread.title().map(Arc::as_ref),
+        Some("Parser error recovery")
+    );
+    assert!(saw_title_update(&mut events));
+
+    for title in ["Parser error recovery", "Rewrite the tokenizer"] {
+        thread.handle_session_update(title_update(title)).unwrap();
+    }
+    assert_eq!(
+        thread.title().map(Arc::as_ref),
+        Some("Parser error recovery")
+    );
     assert!(!saw_title_update(&mut events));
 }
 

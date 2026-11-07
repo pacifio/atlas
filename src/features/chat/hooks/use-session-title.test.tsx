@@ -72,6 +72,17 @@ describe("useSessionTitle", () => {
     expect(backend.listeners.size).toBe(0);
   });
 
+  it("keeps the saved tab title until its store session exists", () => {
+    const { result } = renderHook(() => useSessionTitle("restored-tab", "Saved parser work"));
+    expect(result.current).toBe("Saved parser work");
+    expect(backend.listeners.size).toBe(0);
+
+    act(() => actions().createSession("restored-tab", "codex"));
+    expect(result.current).toBe(UNTITLED_SESSION);
+    act(() => actions().addMessage("restored-tab", "user", "Fix the parser"));
+    expect(result.current).toBe("Fix the parser");
+  });
+
   it("shows the first message immediately, even before the agent binds", () => {
     const { result } = renderHook(() => useSessionTitle(TAB));
     expect(result.current).toBe(UNTITLED_SESSION);

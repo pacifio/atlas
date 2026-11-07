@@ -12,7 +12,7 @@
 
 import { RadioTower } from "lucide-react";
 
-import { sessionDisplayTitle } from "@/features/chat/lib/session-title";
+import { useSessionTitle } from "@/features/chat/hooks/use-session-title";
 import { useRemoteControl } from "@/features/chat/lib/use-remote-control";
 import { pillLabel } from "@/features/chat/components/rc-status-pill";
 import { useChatStore } from "@/features/chat/stores/chat-store";
@@ -32,10 +32,7 @@ export function RemoteControlSection({
   presentation: DetailsPresentation;
 }) {
   const acpSessionId = useChatStore((s) => s.sessions[tabId]?.acpSessionId ?? "");
-  const title = useChatStore((s) => {
-    const session = s.sessions[tabId];
-    return session ? sessionDisplayTitle(session.title, session.firstUserContent) : "";
-  });
+  const title = useSessionTitle(tabId);
   const remote = useRemoteControl(acpSessionId, title);
   const room = remote.room;
 
