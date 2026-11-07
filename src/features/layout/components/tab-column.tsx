@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useMemo, memo } from "react";
 import { useActionShortcut } from "@/features/keybindings/lib/use-action-shortcut";
+import { useNavigationHint } from "@/features/keybindings/lib/use-navigation-hint";
+import { splitNavigationActions } from "@/features/keybindings/lib/navigation-hints";
 import { PaneHeader } from "@/components/titlebar";
 import { BreadcrumbSeparator } from "@/components/breadcrumb-button";
 import { SessionSwitcher } from "@/features/sidebar/components/session-switcher";
@@ -68,6 +70,7 @@ export const TabColumn = memo(function TabColumn({
   projectId: string;
 }) {
   const { setActiveTab, setFocusedGroup, moveTab } = useLayoutStore.use.actions();
+  const navigationHint = useNavigationHint();
 
   const tabsAll = view.tabs;
   const tabs = useMemo(() => tabsAll.filter((t) => GROUP_OF(t) === groupId), [tabsAll, groupId]);
@@ -87,6 +90,11 @@ export const TabColumn = memo(function TabColumn({
 
   return (
     <div
+      role="group"
+      aria-label={`Pane ${view.groupOrder.indexOf(groupId) + 1}`}
+      {...navigationHint(
+        isActive ? splitNavigationActions(groupId, view.groupOrder, view.focusedGroupId) : [],
+      )}
       data-session-column={main || undefined}
       className="relative h-full flex flex-col overflow-hidden bg-background"
       // The notifications drawer sizes itself to the surfaces pane by this.
@@ -122,6 +130,7 @@ export const TabColumn = memo(function TabColumn({
               // With two panes on screen, only the focused one's active tab
               // is fully lit, so it is clear where the next keystroke lands.
               focused={solo || isFocused}
+              navigationEnabled={isFocused}
               runningTabIds={runningTabIds}
               onSelect={setActiveTab}
               onMove={moveTab}

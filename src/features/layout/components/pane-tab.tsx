@@ -37,6 +37,8 @@ import { requestCloseTab } from "@/features/chat/lib/close-tab";
 import { AtlasIcon } from "@/components/brand-marks";
 import { FileIcon, type FallbackIcon } from "@/features/icon-theme/components/file-icon";
 import type { TabType } from "@/lib/constants";
+import type { ActionId } from "@/features/keybindings/lib/actions";
+import { useNavigationHint } from "@/features/keybindings/lib/use-navigation-hint";
 import { groupOf, useLayoutStore, type Tab } from "../stores/layout-store";
 import {
   ContextMenu,
@@ -109,6 +111,8 @@ interface PaneTabProps {
   /** The strip's one Tab stop (roving focus): the active tab, or the first
    *  when none is. Defaults to `active`. */
   tabStop?: boolean;
+  /** The actions that currently select this tab in its strip. */
+  navigationActions?: readonly ActionId[];
 }
 
 /**
@@ -180,8 +184,10 @@ export function PaneTab({
   onSelect,
   menu,
   tabStop = active,
+  navigationActions,
   drag,
 }: PaneTabProps & { drag?: TabDrag }) {
+  const navigationHint = useNavigationHint();
   const Icon = icon ?? tabIcons[tab.type as TabType] ?? MessageSquare;
   // A tab opened from a path carries it in `data.filePath`, so the strip
   // shows the same icon the tree row it came from does.
@@ -195,6 +201,7 @@ export function PaneTab({
     <div
       ref={drag?.setNodeRef}
       role="tab"
+      {...navigationHint(navigationActions ?? [])}
       aria-selected={active}
       tabIndex={tabStop ? 0 : -1}
       title={filePath ?? undefined}

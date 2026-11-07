@@ -2,9 +2,9 @@ import { useState, Suspense } from "react";
 import { House } from "lucide-react";
 import { PaneHeader } from "@/components/titlebar";
 import { WelcomeScreen } from "@/features/app/components/welcome-screen";
-import { PROJECTLESS_TYPES } from "@/lib/constants";
+import { tabNavigationActions } from "@/features/keybindings/lib/navigation-hints";
 import { columnChrome } from "../lib/shell-edges";
-import { useLayoutStore, type Tab } from "../stores/layout-store";
+import { navigationTabs, useLayoutStore, type Tab } from "../stores/layout-store";
 import { PaneTab, useTabListFocus } from "./pane-tab";
 import { TabContent } from "./tab-panels";
 import { PanelLoading } from "./views/panel-loading";
@@ -30,8 +30,9 @@ export function ProjectlessCenter() {
   // the very tab the user clicked away from.
   const [atHome, setAtHome] = useState(false);
 
-  const allowed = tabs.filter((t) => PROJECTLESS_TYPES.has(t.type));
+  const allowed = navigationTabs(tabs, focusedGroupId, true);
   const storeActive = activeByGroup[focusedGroupId] ?? null;
+  const activeIndex = allowed.findIndex((t) => t.id === storeActive);
   const active = atHome ? null : (allowed.find((t) => t.id === storeActive) ?? null);
   // The strip's one Tab stop: the tab focus is on, else the active one.
   const { focusedId, listProps } = useTabListFocus();
@@ -67,10 +68,13 @@ export function ProjectlessCenter() {
               running={false}
               onSelect={() => setAtHome(true)}
             />
-            {allowed.map((tab) => (
+            {allowed.map((tab, index) => (
               <PaneTab
                 key={tab.id}
                 tab={tab}
+                navigationActions={
+                  !atHome ? tabNavigationActions(index, allowed.length, activeIndex) : []
+                }
                 active={tab.id === active?.id}
                 tabStop={stopId === tab.id}
                 focused

@@ -11,6 +11,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Tab } from "../stores/layout-store";
+import { tabNavigationActions } from "@/features/keybindings/lib/navigation-hints";
 import { SortablePaneTab, useTabListFocus } from "./pane-tab";
 import { HintItem, IconButton } from "@tryatlas/design";
 
@@ -90,6 +91,7 @@ export function PaneTabStrip({
   tabs,
   activeId,
   focused,
+  navigationEnabled = focused,
   runningTabIds,
   onSelect,
   onMove,
@@ -99,6 +101,8 @@ export function PaneTabStrip({
   activeId: string | null;
   /** Whether this column has focus: only then is its active tab fully lit. */
   focused: boolean;
+  /** Only the active project's focused column owns indexed navigation. */
+  navigationEnabled?: boolean;
   runningTabIds: ReadonlySet<string>;
   /** Stable: the tabs are memoized on it. */
   onSelect: (id: string) => void;
@@ -111,6 +115,14 @@ export function PaneTabStrip({
     useSensor(PointerSensor, { activationConstraint: { distance: TAB_DRAG_ACTIVATION_DISTANCE } }),
   );
   const ids = useMemo(() => tabs.map((t) => t.id), [tabs]);
+  const activeIndex = ids.indexOf(activeId ?? "");
+  const navigationActions = useMemo(
+    () =>
+      Array.from({ length: tabs.length }, (_, index) =>
+        navigationEnabled ? tabNavigationActions(index, tabs.length, activeIndex) : [],
+      ),
+    [tabs.length, activeIndex, navigationEnabled],
+  );
   const handleDragEnd = useCallback(
     ({ active, over }: DragEndEvent) => {
       if (!over || active.id === over.id) return;
@@ -226,10 +238,11 @@ export function PaneTabStrip({
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={horizontalListSortingStrategy}>
-              {tabs.map((tab) => (
+              {tabs.map((tab, index) => (
                 <SortablePaneTab
                   key={tab.id}
                   tab={tab}
+                  navigationActions={navigationActions[index]}
                   active={tab.id === activeId}
                   focused={focused}
                   running={runningTabIds.has(tab.id)}

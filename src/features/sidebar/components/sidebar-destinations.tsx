@@ -13,6 +13,7 @@ import type { ComponentProps } from "react";
 import { Bell, BookOpen, GitBranch, MessagesSquare, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/features/app/stores/app-store";
+import { useNavigationHint } from "@/features/keybindings/lib/use-navigation-hint";
 import { useLayoutStore } from "@/features/layout/stores/layout-store";
 import {
   DESTINATIONS,
@@ -222,12 +223,14 @@ export function UsageButton(props: DockButtonProps) {
 // say so instead of opening a view with nothing in it.
 
 export function KnowledgeButton(props: DockButtonProps) {
+  const navigationHint = useNavigationHint();
   const open = useLayoutStore((s) => destinationShown(s, "knowledge"));
   const hasProject = useAppStore((s) => !!s.currentProject);
   return (
     <DestinationButton
       {...props}
       icon={BookOpen}
+      {...navigationHint(hasProject ? ["panels.knowledge"] : [])}
       label="Knowledge"
       hint={hasProject ? undefined : "Open a project to open its knowledge base"}
       active={open}
