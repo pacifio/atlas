@@ -268,6 +268,17 @@ function TerminalTab({
           onSelect();
         }
       }}
+      // Middle-click must not paste the primary selection on Linux, nor
+      // start an autoscroll elsewhere.
+      onMouseDown={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+      onAuxClick={(e) => {
+        if (e.button === 1 && closable) {
+          e.preventDefault();
+          onClose();
+        }
+      }}
       className={cn(
         // The side panel's tab (`pane-tab.tsx`): status glyph on the left, which
         // turns into the close button on hover, then the directory.
@@ -306,6 +317,9 @@ function TerminalTab({
             type="button"
             aria-label="Close terminal"
             draggable={false}
+            onMouseDown={(e) => {
+              if (e.button === 0) e.preventDefault();
+            }}
             onClick={(e) => {
               e.stopPropagation();
               onClose();
